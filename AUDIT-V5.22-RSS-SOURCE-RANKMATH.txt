@@ -1,0 +1,28 @@
+GlobiqNews Fresh AI Publisher V5.22 — RSS / Source URL / Rank Math SEO audit
+
+REAL ISSUES FOUND IN V5.21 AND FIXED
+
+RSS / FEEDS
+[PASS] Declared category feeds can now be verified by their <link rel="alternate" title="..."> label as well as the feed URL.
+[PASS] This fixes category feeds whose URLs are generic/ID-based while article permalinks are flat and do not contain the category slug.
+[PASS] Existing WordPress SimplePie parser, raw RSS/Atom fallback, rel=alternate preference, recursion guard and blocked-source safety remain.
+
+SOURCE / CATEGORY URL
+[PASS] Multiple JSON-LD Article/NewsArticle articleBody values are no longer concatenated into one fake article.
+[PASS] The longest genuine JSON-LD articleBody is selected, and its own headline/title is kept.
+[PASS] Existing direct article/category/feed detection, semantic article cards, same-site scanning, sitemap fallback, public print/alternate fallback and anti-bot rules remain.
+
+RANK MATH SEO
+[PASS] Power-word validation now uses Rank Math's own installed English power-word dictionary when available, with a local fallback only if Rank Math's file cannot be read.
+[PASS] Rank Math Schema module is explicitly checked because Rank Math's own TOC block depends on that module.
+[PASS] TOC validation uses WordPress has_block('rank-math/toc-block') when available.
+[PASS] Actual Rank Math schema types are checked from Rank Math schema data/default schema. The old private _gnf5_schema_recommendation field is no longer accepted as proof of Rank Math schema.
+[PASS] Strict Auto Publish requires Article, NewsArticle, BlogPosting or ReportageNewsArticle schema.
+[PASS] Rank Math primary category metadata is saved for the generated category.
+[PASS] Slugs are limited safely without cutting through percent-encoded non-Latin URL bytes.
+[PASS] Existing 1000–1200 words, exact focus-keyword checks, 1.00–1.50% density, title/meta/slug/H2-H3/opening/conclusion/ALT, title uniqueness, number/year, sentiment, TOC, list, 3 FAQ, 5–8 tags, links and 2-image checks remain.
+
+IMPORTANT
+- Rank Math Content AI is separate from normal Rank Math SEO analysis and is not faked.
+- Rank Math's live analyzer can change in later Rank Math releases.
+- Publisher websites can change feeds/HTML or block server-side requests at any time.

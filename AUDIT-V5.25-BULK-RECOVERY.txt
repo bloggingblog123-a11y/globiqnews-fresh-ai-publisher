@@ -1,0 +1,24 @@
+GlobiqNews Fresh AI Publisher V5.25 — Bulk Recovery Queue
+
+USER REQUEST
+Select many failed drafts at the same time, but let the plugin manage them one-by-one rather than running them in parallel.
+
+IMPLEMENTED
+[PASS] Checkbox on every visible failed draft.
+[PASS] Select All Visible.
+[PASS] Retry Selected One-by-One.
+[PASS] Retry All Visible One-by-One.
+[PASS] Persistent server-side queue.
+[PASS] Only ONE selected draft is processed per worker step.
+[PASS] Global bulk worker lock prevents two selected drafts from processing simultaneously.
+[PASS] Existing per-category lock remains active.
+[PASS] Busy-category drafts are moved to the back of the queue automatically.
+[PASS] A busy-category defer does not lose the selected draft.
+[PASS] One stubborn failed draft does not block the remaining selected drafts.
+[PASS] Browser runs sequential AJAX requests while the page is open.
+[PASS] WP-Cron is a backup worker when the page is closed.
+[PASS] Queue survives reloads and normal upgrades/deactivate/reactivate.
+[PASS] Stale processing items are safely re-queued after a timeout.
+[PASS] V5.24 RSS diagnostics, Source URL engine, Rank Math gate, images and recovery are retained.
+
+This is intentionally NOT parallel processing.

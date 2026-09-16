@@ -1,0 +1,31 @@
+GlobiqNews Fresh AI Publisher V5.16 — repeated deep audit
+
+REAL ISSUES FOUND IN V5.15 AND FIXED
+[PASS] Multi-word focus-keyword occurrence targets now account for the number of words in the phrase. A 2-word keyword is no longer instructed to appear twice as often as Rank Math density needs.
+[PASS] Keyword-density repair and final validation now measure the same article-body HTML, preventing repair/validation loops caused by TOC/related-link text.
+[PASS] Focus keywords longer than 3 words are rejected by the strict gate and sent to repair.
+[PASS] Strict validation checks the actual WordPress slug after wp_insert_post/wp_update_post, not only the requested slug.
+[PASS] Trusted links from the same publisher host no longer falsely trigger the hidden-source-link rule; source visibility is checked by source identity/resource, not by host name alone.
+[PASS] Same article URLs with common referral/tracking presentation parameters are deduplicated within a scan and in blocked-source caching.
+[PASS] Automatic category cron chains are guarded so a recurring schedule cannot start a second target chain while the previous continuation chain is still active.
+[PASS] Cron continuation scheduling failures end the chain cleanly instead of leaving a misleading active state.
+[PASS] Source URL discovery can use a public sitemap fallback even if the visible category page is blocked.
+[PASS] Article-shaped direct Source URLs can proceed to the extraction stage so official public print/alternate fallbacks still have a chance when the normal presentation URL is blocked.
+[PASS] Category-declared feed URLs that are themselves category-scoped can supply flat article URLs; site-wide declared feeds remain scope-filtered.
+[PASS] Related/recommended/trending/popular areas are excluded more aggressively from Source URL discovery to reduce cross-category mixing.
+[PASS] Source text is explicitly treated as untrusted data in Gemini prompts, reducing prompt-injection risk from scraped pages.
+[PASS] Failed attachment insertion removes the just-uploaded orphan image file, reducing wasted storage.
+
+RETAINED
+[PASS] V5.7 custom instructions and draft recovery.
+[PASS] V5.9 automatic recovery.
+[PASS] V5.11 RSS/Atom, Source URL and Trusted External Links.
+[PASS] Auto Publish strict gate.
+[PASS] Category Save / author / target / timing.
+[PASS] 1000–1200 article-body words.
+[PASS] Rank Math focus keyword/title/meta/slug/opening/H2-H3/body/conclusion/image ALT checks.
+[PASS] Rank Math density target 1.00–1.50%.
+[PASS] Unique SEO title, <=60 chars, number/year, power word and truthful sentiment word.
+[PASS] Rank Math TOC, list, exactly 3 FAQ questions and 5–8 tags.
+[PASS] Exactly 2 low-storage original images: Image 1 featured+inline and Image 2 inline.
+[PASS] Source images are never copied or sent to the image generator.

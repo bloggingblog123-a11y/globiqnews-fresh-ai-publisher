@@ -1,0 +1,34 @@
+GlobiqNews Fresh AI Publisher V5.17 — repeated final re-audit
+
+REAL V5.16 ISSUES FOUND AND CORRECTED
+[PASS] Multiword focus-keyword density repair now uses the same exact-phrase math as final validation.
+[PASS] Exact keyword occurrences use Unicode-aware phrase boundaries; keyword "AI" will not count letters inside words such as "said".
+[PASS] Rank Math TOC Gutenberg wrapper is aligned with the current Rank Math block serialization and no longer adds a custom wrapper id.
+[PASS] RSS/Atom linked-feed fallback has a recursion-depth guard to prevent circular linked-feed fatal/memory loops.
+[PASS] External link test counts OK/Restricted as usable and Broken/Unavailable as failed.
+[PASS] Duplicate identity ignores HTTP-vs-HTTPS presentation differences.
+[PASS] A single import run deduplicates source URL variants using source identity.
+[PASS] Trusted External Links exclude the source article by identity, including referral/query variants.
+[PASS] Generic CSS class "card" no longer makes an off-category link trusted.
+[PASS] Related/recommended/trending/popular/most-read/sponsored/ad modules are filtered more aggressively from category Source URL discovery.
+
+RETAINED USER REQUIREMENTS
+[PASS] V5.7 Global + Category Custom Instructions and Draft Recovery.
+[PASS] V5.9 automatic recovery.
+[PASS] V5.11 RSS/Atom + Source URL + Trusted External DoFollow Links.
+[PASS] Auto Publish only after strict validation.
+[PASS] Per-category Save, Author, Target Posts, Timing, RSS, Source URLs and external links.
+[PASS] 1000–1200 article-body words.
+[PASS] Rank Math keyword placement and 1.00–1.50% density gate.
+[PASS] Unique SEO title, <=60 chars, number/year, power word and truthful sentiment.
+[PASS] Rank Math TOC block, list, exactly 3 FAQ questions and 5–8 tags.
+[PASS] Internal link verification where same-category published content exists.
+[PASS] Exactly 2 original low-storage images: Image 1 featured+inline; Image 2 inline.
+[PASS] No source image copying, downloading or image-reference use.
+[PASS] Blocked-source retry safety.
+
+RUNTIME LIMITATIONS
+- Publisher HTML/RSS and anti-bot behavior can change later.
+- Rank Math's internal analysis/power-word rules can change between releases.
+- Rank Math Content AI is separate from normal Rank Math SEO checks.
+- WP-Cron, hosting resources, PHP extensions and API quotas require one live WordPress test.

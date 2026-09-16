@@ -1,0 +1,55 @@
+GlobiqNews Fresh AI Publisher V5.21 — Checkpoint, Concurrency & Final Reliability Audit
+
+REAL V5.20 ISSUES FOUND AND FIXED
+[PASS] Draft checkpoint now happens immediately after the first usable Gemini article response; optional length/title/density repair calls run only after the WordPress Draft exists.
+[PASS] Failed optional pre-publish repair calls no longer discard an already-generated article before Draft creation.
+[PASS] draft_created and processing states are automatically recovery-queued, so a hard timeout/fatal during post-processing can recover later.
+[PASS] Category import locks use an atomic database option claim with ownership tokens instead of a non-atomic get/set transient race.
+[PASS] Releasing an old request cannot delete a newer request's category lock.
+[PASS] A separate atomic source-URL lock prevents two categories/requests from normally processing the same source URL concurrently.
+[PASS] Long RSS/Source scanning, extraction, Gemini repair and image generation refresh the owned category lock.
+[PASS] Manual URL runs use the source lock and recheck duplicates after acquiring it.
+[PASS] Redirected source pages expose the final public URL when the WordPress HTTP transport provides it, so relative article links resolve against the page actually returned.
+[PASS] A resolved redirected article URL is duplicate-checked and stored as the private source URL when it differs from the entered candidate URL.
+[PASS] Image provider retries happen before built-in fallback; temporary failures no longer jump to fallback after the first request.
+[PASS] The compatibility generate_two() path no longer references an undefined category variable.
+[PASS] Image prompts are text-only and URL/data-image tokens are stripped before generation.
+[PASS] Duplicate stored attachment IDs are not reused as both required images.
+[PASS] If the provider returns identical image file bytes twice, image 2 is regenerated with a different-composition instruction; a repeated binary duplicate fails safely for later recovery.
+[PASS] Generated image attachment insertion now requests WordPress errors explicitly and removes the uploaded file if attachment creation fails.
+[PASS] Image Generator Test removes its temporary test attachment so repeated connection tests do not fill the Media Library.
+[PASS] AI-generated hyperlinks are stripped from article body repairs; verified internal links and administrator-supplied trusted external links are inserted only by the plugin.
+[PASS] Image prompts and ALT text are deterministically made different when Gemini returns duplicates; ALT 1 still contains the exact focus keyword.
+[PASS] Final image validation explicitly requires two distinct attachment IDs.
+[PASS] A later Gemini polish pass is re-sanitized so it cannot reintroduce H1/source images/generated links after the initial Draft checkpoint.
+[PASS] Normal pages containing CAPTCHA widgets in comments/login forms are not automatically treated as challenge pages without stronger challenge evidence.
+[PASS] Category-scoped feed detection uses token boundaries instead of loose substrings.
+[PASS] Slug normalization uses the same exact hyphen-delimited focus-keyword test as final validation.
+[PASS] Focus keyword must contain at least one real word and no more than three.
+[PASS] Duplicate WordPress tags are removed case-insensitively before saving.
+[PASS] Hyphenated/multiword power words are normalized consistently during title verification.
+[PASS] When automatic recovery is disabled, a currently active draft_created/processing checkpoint is not shown as a manual failure until it has been stale for at least 15 minutes.
+
+RETAINED USER REQUIREMENTS
+[PASS] V5.7 Global Article / Global SEO / Global Image / per-category Custom Instructions + recovery architecture.
+[PASS] V5.9 automatic recovery/backoff (about 15 minutes, then 1 hour, then 6 hours; configurable max attempts).
+[PASS] V5.11 RSS/Atom + raw XML fallback + Source/Category URL + direct article URL + Trusted External DoFollow Links.
+[PASS] Per-category Save / Enable / Author / Target / Timing / RSS / Source URLs / External Links / instructions.
+[PASS] Manual Run Category and Manual Article URL paths remain immediate rather than dependent on WP-Cron.
+[PASS] Strict Draft-first Auto Publish gate.
+[PASS] 1000–1200 article-body words.
+[PASS] Exact focus keyword in SEO title start, WordPress title, meta, slug, opening, H2/H3, body, conclusion and image ALT.
+[PASS] Rank Math keyword density gate remains 1.00–1.50% using exact-phrase occurrences.
+[PASS] SEO title <=60 chars, uniqueness checks, number/year, power word and truthful sentiment checks.
+[PASS] Meta description 120–160 chars, slug <75 chars, Rank Math metadata synchronization.
+[PASS] Rank Math TOC block, Gutenberg block validation, list, exactly 3 FAQ questions and 5–8 tags.
+[PASS] Same-category internal-link verification and trusted external DoFollow-link handling.
+[PASS] Exactly 2 original low-storage images: Image 1 featured+inline; Image 2 inline.
+[PASS] Source images are never downloaded/copied/transformed/traced or sent to image generation as references.
+[PASS] Blocked-source retry delay and no anti-bot bypass behavior remain.
+
+HONEST LIVE LIMITATIONS
+- Publisher HTML/RSS, redirects and anti-bot behavior can change after this build.
+- WP-Cron execution depends on the hosting environment/site traffic unless a real server cron is configured.
+- API quota/billing/network behavior and PHP extensions require a real WordPress runtime test.
+- Rank Math can change its internal analyzer/power-word rules; Rank Math Content AI is separate from normal SEO checks.

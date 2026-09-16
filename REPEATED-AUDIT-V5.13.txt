@@ -1,0 +1,68 @@
+GlobiqNews Fresh AI Publisher V5.13 repeated audit
+
+SOURCE / FEED
+[PASS] RSS per category, SimplePie first, raw XML fallback.
+[PASS] Atom rel=alternate preferred.
+[PASS] Source URL supports feed, direct article and category/listing page.
+[FIXED] JSON-LD category-page descriptions no longer masquerade as one articleBody.
+[FIXED] Navigation/sidebar links ignored in category discovery.
+[FIXED] Category-path relevance added to source candidate ranking.
+[PASS] Public declared-feed and sitemap fallbacks retained.
+[PASS] 401/403/429/CAPTCHA skipped without bypass and cached by retry delay.
+[PASS] Source images never used.
+
+EXTERNAL LINKS
+[PASS] Separate per category and saved independently.
+[FIXED] Unavailable/broken links are not inserted; OK and restricted-public checks can be used.
+[PASS] Normal DoFollow anchors; no nofollow/ugc/sponsored attribute added.
+[FIXED] Source URL resource comparison handles trailing-slash variants.
+[PASS] Source URL/host visibility is checked before validation passes.
+
+CATEGORY / SCHEDULE
+[PASS] No global post limit.
+[PASS] Per-category target, timing, author, save, run, instructions, RSS, source URLs, external links.
+[FIXED] Author selector limited to users who can edit posts.
+[PASS] Manual Run Now independent of WP-Cron.
+[PASS] Automatic timing uses WP-Cron.
+
+ARTICLE / SEO
+[PASS] 1000–1200-word article BODY target.
+[FIXED] Generated TOC/related/resource navigation no longer causes false >1200 failures.
+[PASS] Short-source expansion forbids fabricated facts.
+[PASS] Focus keyword title/meta/slug/opening/H2-H3/body/conclusion/ALT checks.
+[PASS] 1.0–1.5% exact-phrase density gate.
+[PASS] Unique <=60-character SEO title, number/year, power word, sentiment.
+[FIXED] Publication year is the only allowed fallback number when source facts have no safe number.
+[PASS] 3 FAQ H3 questions, 5–8 tags, list, short paragraphs.
+[FIXED] Semantic checks use main article body, not generated navigation.
+[PASS] Rank Math metadata synchronization.
+[PASS] Source URL hidden.
+[PASS] Content AI is not falsely claimed.
+
+GUTENBERG / RANK MATH TOC
+[FIXED] Rank Math TOC attributes reduced to current converter-compatible keys.
+[FIXED] Extra TOC div id removed.
+[FIXED] Core lists now serialize nested core/list-item blocks.
+[PASS] Images inserted only between top-level blocks.
+[PASS] Rank Math must be enabled/detected for strict validation.
+
+IMAGES
+[PASS] Exactly 2 images required for strict gate.
+[PASS] Image 1 featured + inline, Image 2 inline.
+[PASS] WebP 1200×675 optimization where supported.
+[PASS] OpenAI, WebUI/FLUX, built-in fallback.
+[PASS] Successful image checkpoint and missing-image-only recovery.
+
+RECOVERY / AUTO PUBLISH
+[PASS] Draft checkpoint before images/validation.
+[PASS] Gemini retry + optional backup model.
+[PASS] Image retry.
+[PASS] SEO repair.
+[PASS] Auto recovery ~15m, 1h, 6h.
+[PASS] Auto Publish only after zero critical validation errors.
+[PASS] Recovered drafts can auto-publish only after same gate.
+
+RUNTIME LIMITATIONS
+[INFO] Automatic category schedules and automatic recovery require WordPress WP-Cron (or a real server cron calling wp-cron.php).
+[INFO] Third-party source sites can change HTML or block automated access.
+[INFO] Rank Math's own analyzer/power-word dictionary can change; this plugin does not fake Rank Math scores.

@@ -1,0 +1,35 @@
+GlobiqNews Fresh AI Publisher V5.15 — deep repeated audit
+
+REAL ISSUES FOUND IN V5.14 AND CORRECTED
+[PASS] Automatic recovery no longer consumes a retry attempt merely because a category import lock is busy.
+[PASS] Failed Draft Recovery remains visible for failed drafts even when automatic recovery is disabled.
+[PASS] Automatic category schedules now process one post per PHP request and continue with short single cron events, reducing timeout/500 risk for category targets above 1.
+[PASS] Continuation cron events are cleared on reschedule/deactivation.
+[PASS] Per-category author must resolve to a real user who can edit posts; otherwise article creation stops safely before wp_insert_post.
+[PASS] Duplicate detection now stores a source identity that ignores common referral/tracking presentation parameters without changing the actual fetch URL.
+[PASS] Source URL category discovery remains category-safe but no longer rejects legitimate flat article URLs when they appear inside clear semantic/article cards.
+[PASS] Trusted external link own-host comparison treats www/non-www as the same site.
+[PASS] Broken/unavailable configured external links no longer create a permanent Rank Math/Auto Publish validation loop; only a currently usable trusted link is required.
+[PASS] Recovery cron enable/disable state is rebuilt when global settings are saved.
+
+RETAINED
+[PASS] V5.7 global/category custom instructions + draft recovery.
+[PASS] V5.9 automatic recovery schedule.
+[PASS] V5.11 RSS/Atom + Source URL + Trusted External Links engine.
+[PASS] V5.12+ strict Auto Publish gate.
+[PASS] Per-category Save / Author / Target / Timing / RSS / Source URLs / External Links.
+[PASS] 1000–1200 article-body words.
+[PASS] Rank Math focus keyword/title/meta/slug/opening/H2-H3/body/conclusion/ALT verification.
+[PASS] Rank Math keyword density target 1.00–1.50%.
+[PASS] Unique SEO titles, <=60 characters, number/year, power word, truthful sentiment word.
+[PASS] Rank Math TOC block, list, exactly 3 FAQ questions, 5–8 tags, internal link logic.
+[PASS] Exactly 2 original low-storage images: Image 1 featured+inline, Image 2 inline.
+[PASS] Source images are not copied or sent to image generation.
+[PASS] OpenAI GPT-Image-2.5 Flare remains supported by the current Image API.
+[PASS] Gemini 3.5 Flash-Lite remains a stable current Gemini API model.
+
+RUNTIME LIMITATIONS
+- Publisher HTML/RSS and anti-bot policies can change after this build.
+- WordPress WP-Cron still needs to run on the hosting environment for automatic timing/recovery.
+- Rank Math's private/current power-word dictionary can change between versions.
+- API quotas, billing, hosting memory, PHP extensions, and network access require one real WordPress test.

@@ -1,0 +1,6 @@
+Fresh V5.7 upgrade notes
+
+This build intentionally keeps the existing V5 setting namespace (gnf5_fresh_settings) so V5.6 settings remain available after upgrade.
+
+It does not depend on any V3/V4 plugin.
+For best results, keep only one GlobiqNews Fresh AI Publisher version active.

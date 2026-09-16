@@ -1,0 +1,141 @@
+V5.10 SOURCE ENGINE + V5.7 RECOVERY AUDIT
+
+[PASS] Existing V5 settings namespace unchanged: gnf5_fresh_settings
+[PASS] V5.7 Global Article Instructions preserved
+[PASS] V5.7 Global SEO Instructions preserved
+[PASS] V5.7 Global Image Instructions preserved
+[PASS] V5.7 Per-category Instructions preserved
+[PASS] Draft checkpoint + Gemini retry + image retry/checkpoint preserved
+[PASS] Failed Draft Recovery preserved
+[PASS] V5.9 automatic recovery preserved
+[PASS] Per-category RSS/source/author/limit/timing isolation preserved
+[PASS] 1000-1200 words + Rank Math rules preserved
+[PASS] 2 low-storage images preserved
+[PASS] Source images remain unused
+[PASS] RSS SimplePie parser present
+[PASS] Raw RSS/Atom/RDF XML fallback present
+[PASS] Direct article URL detection in Source section present
+[PASS] Category/listing discovery present
+[PASS] JSON-LD URL discovery present
+[PASS] Semantic article-card link discovery present
+[PASS] Serialized same-host article URL discovery present
+[PASS] Recursive public sitemap-index fallback present
+[PASS] Functional source/ref/campaign query parameters are preserved
+[PASS] Per-category Test RSS + Sources control present
+[PASS] Anti-bot bypass is not attempted
+
+V5.9 AUTOMATIC RECOVERY AUDIT
+- Auto recovery enabled by default: YES
+- Recovery cron interval: 15 minutes
+- Max attempts default: 3
+- Backoff: 15m -> 1h -> 6h
+- Reuses saved article and successful images: YES
+- Does not delete failed drafts: YES
+- Manual recovery panel hidden until auto attempts exhausted: YES
+- Previous V5 settings namespace unchanged: YES
+- Category author/limit/timing/source separation preserved: YES
+- 1000-1200 words + Rank Math rules preserved: YES
+- 2 images total, Image 1 featured + inline, Image 2 inline: YES
+- Low-storage WebP system preserved: YES
+- Source anti-bot bypass not attempted: YES
+
+GlobiqNews Fresh AI Publisher V5.7 — Requirements Check
+
+This is a static build audit. It verifies code structure/syntax and requested rules before packaging. It cannot reproduce every hosting/API/Rank Math runtime condition without installing on the user's WordPress server.
+
+[PASS] Settings compatibility
+    Uses the same option key: gnf5_fresh_settings; existing V5.6 fields remain.
+
+[PASS] Category isolation
+    Each category keeps separate RSS, source URLs, author, post limit, timing, links, instructions.
+
+[PASS] Separate category Save
+    AJAX Save [Category] Settings retained and now saves category instructions too.
+
+[PASS] No global post limit
+    Only per-category Target Posts Per Run is used.
+
+[PASS] Blocked-source safety
+    6-hour default retry delay retained; 401/403/429/CAPTCHA are skipped without bypass.
+
+[PASS] Source fallbacks
+    RSS/Atom, public category links, linked feeds, sitemap, JSON-LD, public AMP/print and RSS text fallback retained.
+
+[PASS] Gemini resilience
+    Up to 3 retries on the primary model; optional backup model after primary retries.
+
+[PASS] Draft checkpoint
+    Post is inserted as Draft immediately after article text is successfully generated.
+
+[PASS] 1000–1200 words
+    Generation, correction and strict validation enforce the range; target about 1100.
+
+[PASS] Rank Math core metadata
+    Title, description and focus keyword meta fields retained and synchronized.
+
+[PASS] Rank Math title rules
+    Unique <=60-char SEO title, number/year, power word, one truthful sentiment word.
+
+[PASS] Rank Math keyword rules
+    Keyword in title/meta/slug/opening/H2-H3/body/conclusion/image ALT; density 1.0–1.5%.
+
+[PASS] Rank Math TOC/Gutenberg
+    Rank Math TOC block and serialized Gutenberg blocks retained.
+
+[PASS] Readability
+    Long-paragraph splitting retained; short paragraphs requested in repair passes.
+
+[PASS] FAQ/tags/links
+    3-question FAQ instruction, tags, same-category internal links and optional trusted external links retained.
+
+[PASS] 2-image requirement
+    Exactly 2 generated images: first featured+inline, second inline.
+
+[PASS] Source-image rule
+    Source/RSS images are not downloaded, copied, traced, transformed or used as image references.
+
+[PASS] Low storage images
+    1200×675 WebP optimizer and quality setting retained.
+
+[PASS] Image resilience
+    Each image retries up to 3 times; successful image IDs are checkpointed; retry generates only missing images.
+
+[PASS] Validation repair
+    Up to 2 post-save SEO/readability repair passes before leaving the post as Draft.
+
+[PASS] Recovery state
+    Persistent states: draft_created, processing, image_pending, validation_failed, post_processing_failed, complete.
+
+[PASS] Failed Draft Recovery UI
+    Retry Now, Skip Recovery and Edit Draft controls added.
+
+[PASS] Retry behavior
+    Retry reuses stored article data and existing successful images instead of starting over.
+
+[PASS] Post target counting
+    A post counts as created immediately after wp_insert_post succeeds, even if final validation keeps it Draft.
+
+[PASS] Custom global article instructions
+    Editable from WordPress; next generated article uses them.
+
+[PASS] Custom global SEO instructions
+    Editable from WordPress; applied under locked SEO rules.
+
+[PASS] Custom global image instructions
+    Editable from WordPress; appended to text-only image generation instructions.
+
+[PASS] Per-category custom instructions
+    Saved independently with each category.
+
+[PASS] Instruction conflict protection
+    Locked factual, word-count, image, category-isolation and critical SEO rules override conflicting custom instructions.
+
+[PASS] PHP static method audit
+    No missing GNF5_* static method references found.
+
+[PASS] PHP syntax
+    All plugin PHP files passed php -l.
+
+[PASS] JavaScript syntax
+    assets/admin.js passed node --check.
+

@@ -1,0 +1,43 @@
+GlobiqNews Fresh AI Publisher V5.23 — RSS / Source URL / Rank Math strict audit
+
+REAL ISSUES FOUND AFTER V5.22 AND FIXED
+
+RSS / ATOM
+[PASS] A feed pasted into Source URLs now uses the full RSS engine if direct raw-XML parsing fails instead of falling through into HTML scanning.
+[PASS] Raw Atom parsing prefers rel=alternate links whose MIME type is HTML/XHTML before non-web alternate representations.
+[PASS] Existing WordPress SimplePie parser, raw fallback, recursion guard and blocked-source rules remain.
+
+SOURCE / CATEGORY URL
+[PASS] A child section URL cannot become an article candidate only because it lives under the category path.
+[PASS] Normal candidates need an actual article URL signal, or a clear editorial-card/headline context for flat publisher permalinks.
+[PASS] Links inside <article> cards are no longer all trusted automatically; author/topic/navigation-style links are filtered more aggressively.
+[PASS] Short listing URLs such as /technology.html are no longer treated as direct articles merely because they end in .html and have an H1.
+[PASS] Direct .html/.cms articles can still pass when article-specific evidence exists.
+[PASS] V5.22 category-feed title scoping and longest genuine JSON-LD articleBody extraction remain.
+
+RANK MATH SEO
+[PASS] Schema-module detection now checks Rank Math's current internal module id "rich-snippet", with compatibility fallback.
+[PASS] Rank Math TOC block registration is checked at runtime when WordPress exposes the block registry.
+[PASS] Rank Math Schema DB lookup uses the current post-ID API.
+[PASS] Primary focus keyword uniqueness is now checked against other posts and existing keywords are supplied to Gemini during generation/repair.
+[PASS] Full WordPress permalink length is checked against Rank Math's 75-character URL test, not only the slug length.
+[PASS] Strict Auto Publish requires an internal link; the first post in a category can use the relevant category archive when no same-category post exists.
+[PASS] Strict Auto Publish requires at least one external link and at least one followed/DoFollow external link, matching normal Rank Math link tests.
+[PASS] Trusted External Links remain the safe source for outbound links; source article URLs are never inserted.
+[PASS] Installed Rank Math English power-word data is used when available.
+[PASS] Article/NewsArticle/BlogPosting schema verification remains.
+
+RETAINED
+[PASS] 1000–1200 article-body words.
+[PASS] Exact focus keyword in title/SEO title/meta/slug/first 10%/H2-H3/body/conclusion/ALT.
+[PASS] 1.00–1.50% keyword density.
+[PASS] SEO title <=60 chars, number/year, power word, truthful sentiment, unique title.
+[PASS] Rank Math TOC, list, exactly 3 FAQ questions, 5–8 tags.
+[PASS] Exactly 2 original low-storage images; Image 1 featured+inline, Image 2 inline.
+[PASS] V5.7 custom instructions, V5.9 recovery, V5.11 source engine, later checkpoint/concurrency protections.
+[PASS] No anti-bot bypass and no source-image reuse.
+
+IMPORTANT
+- Rank Math Content AI is a separate system and is not faked.
+- Rank Math's live JavaScript analyzer can change in future versions.
+- Publisher feeds/HTML and anti-bot behavior can change after this build.

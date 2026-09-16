@@ -1,0 +1,25 @@
+GlobiqNews Fresh AI Publisher V5.19 — repeated issue audit
+
+REAL ISSUES FOUND IN V5.18 AND FIXED
+[PASS] Auto-publish recovered drafts can now actually be switched OFF.
+[PASS] Automatic failed-draft recovery can now actually be switched OFF.
+[PASS] Explicit hidden checkbox values make all global on/off settings persist predictably.
+[PASS] Category Enable automatic importing checkbox also submits an explicit OFF value.
+[PASS] Partial category rows caused by PHP max_input_vars are merged over saved rows, preventing accidental RSS/Source/Author/Instruction data loss.
+[PASS] Trusted External Link strict validation uses the same exclusions as link insertion: the source article and this WordPress site's own URLs cannot create an impossible validation loop.
+[PASS] Blocked-source cache uses the exact normalized fetch URL rather than duplicate identity, so one blocked query variant does not unnecessarily suppress another potentially functional variant.
+[PASS] Run All status is not shown as successful when it created zero posts.
+
+RETAINED
+[PASS] V5.7 custom instructions and draft recovery.
+[PASS] V5.9 automatic recovery when enabled.
+[PASS] RSS/Atom, Source URL and Trusted External DoFollow Link engine.
+[PASS] Per-category Save, Author, Target, Timing and isolation.
+[PASS] 1000–1200 article-body words.
+[PASS] Strict Rank Math verification and 1.00–1.50% density gate.
+[PASS] 2 original low-storage images; Image 1 featured+inline, Image 2 inline.
+[PASS] Source images are never reused.
+[PASS] Auto Publish remains Draft-first and validation-gated.
+
+LIVE LIMITATIONS
+A static audit cannot prove publisher-site accessibility, WP-Cron behavior, Rank Math future analyzer changes, or API quota/network behavior. Test one category with Target=1 and Draft/Auto Publish OFF first.

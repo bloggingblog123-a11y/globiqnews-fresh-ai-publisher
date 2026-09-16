@@ -1,0 +1,84 @@
+GlobiqNews Fresh AI Publisher V5.12 Requirement Audit
+
+CORE / CATEGORY
+[PASS] Category-isolated RSS feeds.
+[PASS] Category-isolated Source URLs.
+[PASS] RSS optional; Source URL-only operation retained.
+[PASS] Direct article/category/feed URL auto-detection retained from V5.11.
+[PASS] Per-category author, target post limit, timing, Save Category and Run Category Now retained.
+[PASS] No global post limit. Adaptive scanning and deeper target attempts retained.
+[PASS] Duplicate source protection retained.
+[PASS] Manual Article URL retained.
+[PASS] Blocked-source retry delay retained; no anti-bot bypass.
+[PASS] Trusted external DoFollow link section retained and independently testable.
+
+ARTICLE / INSTRUCTIONS
+[PASS] 1000-1200 words, target ~1100, with correction passes.
+[PASS] Short sources may be expanded only with supported context; no fabricated facts.
+[PASS] Global Article / SEO / Image Instructions retained.
+[PASS] Per-category custom instructions retained.
+[PASS] Locked safety rules override custom instructions.
+
+IMAGES
+[PASS] Exactly 2 generated images total.
+[PASS] Image 1 is featured and also inline; Image 2 is separate inline.
+[PASS] Low-storage 1200x675 WebP optimization retained where supported.
+[PASS] Source/RSS images are not copied, downloaded, transformed, traced or sent to the generator.
+[PASS] OpenAI / self-hosted SD-FLUX / built-in fallback provider settings retained.
+[PASS] Successful image checkpoint and missing-image-only retry retained.
+
+V5.9 RECOVERY / RELIABILITY
+[PASS] Draft checkpoint immediately after article text is created.
+[PASS] Gemini retries up to 3 times and optional backup model retained.
+[PASS] Image retries retained.
+[PASS] SEO automatic repair passes retained.
+[PASS] Automatic recovery retry schedule ~15m -> 1h -> 6h retained.
+[PASS] Failed Draft Recovery stays hidden until automatic attempts are exhausted.
+[PASS] Recovery reuses saved article and successful images.
+
+AUTO PUBLISH
+[PASS] Dedicated Auto Publish switch.
+[PASS] Auto Publish cannot bypass strict validation.
+[PASS] Auto Publish recovered drafts option.
+[PASS] When disabled, validated posts can remain Draft or Pending Review.
+[PASS] Legacy V5.11 Publish/Draft/Pending behavior is migration-safe.
+
+RANK MATH / SEO STRICT GATE
+[PASS] Focus keyword begins SEO title.
+[PASS] Focus keyword in WordPress title.
+[PASS] Focus keyword in meta description.
+[PASS] Focus keyword in slug.
+[PASS] Focus keyword in first 10%.
+[PASS] Focus keyword in H2/H3.
+[PASS] Focus keyword in body.
+[PASS] Focus keyword in conclusion.
+[PASS] Focus keyword in at least one image ALT.
+[PASS] Exact phrase density target 1.0%-1.5%.
+[PASS] Unique SEO title vs existing posts.
+[PASS] SEO title <=60 characters.
+[PASS] Number/year in SEO title.
+[PASS] Power word in SEO title.
+[PASS] One truthful positive OR negative sentiment word.
+[PASS] Meta description 120-160 chars, writer targets 140-155.
+[PASS] Slug <=75 characters.
+[PASS] No body H1; H2/H3 structure.
+[PASS] At least one list.
+[PASS] Real Rank Math TOC block.
+[PASS] Exactly 3 FAQ H3 questions.
+[PASS] 5-8 WordPress tags.
+[PASS] Short paragraphs <=70 words after repair.
+[PASS] Valid Gutenberg block structure check.
+[PASS] Exactly 2 image files, featured image also inline, unique ALT.
+[PASS] Internal post link required when same-category published content is available.
+[PASS] Supplied trusted external link must appear as normal DoFollow.
+[PASS] Final Rank Math title/meta/focus metadata synchronization.
+[PASS] Article schema recommendation metadata.
+[PASS] Source article URL not visible in published content.
+[PASS] Validation failure stays Draft and enters recovery.
+
+V5.11 SOURCE ENGINE
+[PASS] WordPress RSS parser + raw XML fallback.
+[PASS] Atom alternate link handling.
+[PASS] Source URL direct article/category/feed auto-detection.
+[PASS] Same-site semantic link / JSON-LD / declared-feed / sitemap fallbacks retained.
+[PASS] External link reachability testing and 404/410 filtering retained.

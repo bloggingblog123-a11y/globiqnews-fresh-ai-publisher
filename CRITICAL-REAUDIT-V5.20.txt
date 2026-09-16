@@ -1,0 +1,28 @@
+GlobiqNews Fresh AI Publisher V5.20 — Critical Reliability Re-Audit
+
+REAL ISSUES FOUND IN V5.19 AND FIXED
+[PASS] Separate “Save Category Settings” correctly reads the visible Enable Automatic Importing checkbox instead of the hidden OFF field.
+[PASS] Global Save category rows now carry an end-of-row completion sentinel. A max_input_vars-truncated row no longer disables a category merely because hidden enabled=0 arrived before the checked checkbox.
+[PASS] Source/RSS URL normalization preserves functional query order, duplicate query keys and encoding; only well-known tracking parameters are removed.
+[PASS] Duplicate identity no longer discards ambiguous functional parameters such as source/ref/campaign/from/output.
+[PASS] Focus keyword in the WordPress slug is checked as an exact hyphen-delimited phrase; short keywords such as AI cannot pass inside unrelated slug words.
+[PASS] WordPress article/content/status update failures are no longer silently ignored; the post remains recoverable and gets a clear post-processing failure state.
+[PASS] OpenAI URL image downloads require a successful HTTP response and real supported image bytes.
+[PASS] Base64 image responses from OpenAI/WebUI are validated as actual WEBP/PNG/JPEG data before attachment creation.
+[PASS] save_bytes refuses HTML/error payloads masquerading as image files.
+[PASS] Fallback author lookup uses edit_posts capability and does not stop after the first 50 users on large subscriber-heavy sites.
+
+RETAINED
+[PASS] V5.7 Custom Instructions + recovery.
+[PASS] V5.9 automatic recovery.
+[PASS] V5.11 RSS/Atom + Source URL + Trusted External Links.
+[PASS] Per-category Save / Author / Target / Timing / RSS / Source URLs / External Links.
+[PASS] Auto Publish strict validation gate.
+[PASS] 1000–1200 article-body words.
+[PASS] Rank Math exact focus-keyword placement and 1.00–1.50% density.
+[PASS] Exactly 2 original low-storage images, Image 1 featured+inline and Image 2 inline.
+[PASS] Source images are not copied or used as image references.
+
+RUNTIME LIMITATIONS
+- Live publisher HTML/RSS and anti-bot behavior can change later.
+- WP-Cron, hosting limits, API quotas and the installed Rank Math version require a real WordPress runtime test.

@@ -1,0 +1,31 @@
+GlobiqNews Fresh AI Publisher V5.14 — repeated audit
+
+This build was created by auditing V5.13 again rather than only changing the version.
+
+FIXED IN V5.14
+[PASS] Category author validation now requires edit_posts permission.
+[PASS] Fallback author will not silently select a Subscriber.
+[PASS] Rank Math TOC wrapper now includes id="rank-math-toc".
+[PASS] Challenge/CAPTCHA detection is conservative; a normal article mentioning "access denied" is not blocked by one phrase alone.
+[PASS] On main-article fetch failure, deterministic official public print/alternate URLs can be tried before giving up.
+[PASS] Source/Category URL candidate discovery is filtered to the source category path/tokens to reduce cross-category mixing.
+[PASS] Linked-feed and sitemap fallbacks from a Source URL are also filtered to that source category scope.
+[PASS] Exact Rank Math SEO-title duplicates are checked site-wide before recent-title similarity checking.
+[PASS] Image API retries are limited to transient failures (timeouts/rate limits/5xx/temporary decode/no-image).
+[PASS] Gemini retries are limited to transient failures; stable 4xx configuration/auth errors are not retried repeatedly.
+[PASS] Generated low-storage images no longer create normal WordPress intermediate image sizes.
+[PASS] Article image blocks use the optimized full image.
+[PASS] Existing V5.7 custom instructions + recovery retained.
+[PASS] V5.9 automatic recovery retained.
+[PASS] V5.11 RSS/Source/External link engine retained.
+[PASS] V5.12/V5.13 strict Auto Publish gate retained.
+[PASS] Exactly 2 images retained: Image 1 featured+inline, Image 2 inline.
+[PASS] 1000–1200 word rule retained.
+[PASS] Rank Math 1.0–1.5% density validation retained.
+[PASS] Per-category Save/Author/Target/Timing/RSS/Source/External Links retained.
+
+LIMITATIONS THAT CANNOT BE HONESTLY GUARANTEED BY STATIC CODE
+- A publisher may change its HTML/RSS or block server-side access at any time.
+- Rank Math's power-word list is internal and regularly updated, so a server-side clone cannot guarantee that every future Rank Math version recognizes the same word.
+- Rank Math Content AI is separate from normal Rank Math SEO analysis.
+- Live hosting/PHP memory/API quota behavior requires one real WordPress test after installation.

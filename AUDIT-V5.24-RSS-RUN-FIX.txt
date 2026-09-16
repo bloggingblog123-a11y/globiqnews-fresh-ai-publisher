@@ -1,0 +1,26 @@
+GlobiqNews Fresh AI Publisher V5.24 — RSS Run Fix
+
+Why the screenshot showed:
+Target 5 | created 0 | published 0 | draft/pending 0 | duplicates 0 | failed before create 0
+
+That result means no article candidate reached article processing. In V5.23, feed-level
+errors and unsaved RSS textarea changes were hidden by the final summary.
+
+FIXES
+[PASS] Run Category now saves the current category panel before it starts.
+[PASS] Test RSS + Sources now saves the current panel before testing.
+[PASS] A feed typed into the RSS box is therefore used immediately; the user does not need
+       to remember a separate Save click first.
+[PASS] Run results now track configured RSS feeds, RSS candidates, RSS failures,
+       Source candidates, Source failures, and diagnostic messages.
+[PASS] If a feed itself fails, the browser no longer repeats the same failed feed five times.
+[PASS] The final red status now identifies RSS/source candidate failure rather than only
+       showing created 0.
+[PASS] Test RSS reports the parser method used.
+[PASS] Raw RSS/Atom fallback now has a lightweight XML parser when PHP DOM is unavailable.
+[PASS] Existing WordPress SimplePie parser remains first choice.
+[PASS] Existing V5.23 Source URL and Rank Math strict verification are retained.
+
+IMPORTANT
+A real publisher can still return 401/403/429, invalid XML, or no new items. The plugin
+reports those conditions and does not bypass anti-bot protection.

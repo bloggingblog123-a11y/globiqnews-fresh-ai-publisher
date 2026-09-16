@@ -1,0 +1,31 @@
+GlobiqNews Fresh AI Publisher V5.18 — stability audit
+
+REAL V5.17 ISSUES FOUND AND FIXED
+[PASS] Exact focus-keyword placement checks now use whole-phrase boundaries, not raw substring matching.
+       Example: focus keyword "AI" no longer passes because the letters appear inside "said".
+[PASS] Exact phrase checks now apply to SEO-title beginning, WordPress title, meta description,
+       article body, first 10%, H2/H3, conclusion and image ALT.
+[PASS] Writer's pre-validation SEO repair uses the same exact phrase logic as final validation.
+[PASS] Duplicate article variants are remembered by source identity across all scan passes in one run.
+[PASS] Global Save no longer wipes category settings whose form fields are missing because of PHP max_input_vars/partial POST.
+[PASS] Separate Category Save no longer rebuilds all schedules twice.
+[PASS] Duplicate split_long_paragraphs() call removed from Gutenberg builder.
+
+RETAINED
+[PASS] V5.7 custom instructions and recovery.
+[PASS] V5.9 automatic failed-draft recovery.
+[PASS] RSS/Atom, Source URL and Trusted External DoFollow Links.
+[PASS] Per-category Save / Author / Target / Timing / source separation.
+[PASS] Auto Publish only after strict gate.
+[PASS] 1000–1200 article-body words.
+[PASS] Rank Math exact phrase density 1.00–1.50%.
+[PASS] Unique SEO title, <=60 chars, number/year, power word and truthful sentiment.
+[PASS] Rank Math TOC, exactly 3 FAQ questions, 5–8 tags, internal links.
+[PASS] Exactly 2 original low-storage images: Image 1 featured+inline, Image 2 inline.
+[PASS] No source-image copying/reference input.
+[PASS] Blocked-source retry protection.
+
+RUNTIME LIMITATIONS
+- Live publisher HTML/RSS/anti-bot behavior can change.
+- Rank Math's own internal analysis/power-word rules can change by version.
+- WP-Cron, API quota/billing, network access, PHP extensions and hosting limits need a live site test.

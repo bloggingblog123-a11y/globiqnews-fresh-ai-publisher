@@ -1,0 +1,20 @@
+V5.11 Source / Feed / External Link audit
+
+[PASS] Per-category RSS/Atom field is saved by the category Save button.
+[PASS] Per-category Source URL field is saved by the category Save button.
+[PASS] Per-category Trusted External DoFollow Links field is saved by the category Save button.
+[PASS] RSS uses WordPress feed parser and raw XML fallback.
+[PASS] Atom raw XML parser prefers rel=alternate over rel=self.
+[PASS] Source URLs support direct article URLs.
+[PASS] Source URLs support category/listing URLs.
+[PASS] Source URLs support feed URLs.
+[PASS] Direct-article detection uses articleBody or stronger page/body signals.
+[PASS] Source images are not reused.
+[PASS] External links exclude the source article URL.
+[PASS] External links exclude this WordPress site's own host.
+[PASS] External links are normal anchors with no nofollow/ugc/sponsored rel attribute.
+[PASS] Known HTTP 404/410 external links are skipped.
+[PASS] External tester distinguishes reachable, restricted, broken and unavailable states.
+[PASS] Category test button checks RSS + Source URLs + External Links.
+[PASS] V5 settings namespace retained.
+[PASS] V5.7 custom instructions and recovery code retained.
