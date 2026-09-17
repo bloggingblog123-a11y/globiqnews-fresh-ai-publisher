@@ -279,13 +279,13 @@ class GNF5_SEO {
             $out['image_alts'][$i]=sanitize_text_field($alts[$i]??(($out['focus_keyword']?:$out['title']).' editorial image '.($i+1)));
         }
         if($out['focus_keyword'] && !self::contains_exact_phrase($out['image_alts'][0],$out['focus_keyword'])){
-            $out['image_alts'][0]=$out['focus_keyword'].' — original editorial image';
+            $out['image_alts'][0]=$out['focus_keyword'].' â€” original editorial image';
         }
         if(strcasecmp(trim($out['image_prompts'][0]),trim($out['image_prompts'][1]))===0){
             $out['image_prompts'][1].=' Use a clearly different composition, viewpoint, subject arrangement, and visual concept from image 1.';
         }
         if(trim($out['image_alts'][1])==='' || strcasecmp(trim($out['image_alts'][0]),trim($out['image_alts'][1]))===0){
-            $out['image_alts'][1]=sanitize_text_field(($out['title']?:'Article').' — supporting editorial image');
+            $out['image_alts'][1]=sanitize_text_field(($out['title']?:'Article').' â€” supporting editorial image');
         }
         return self::normalize_metadata($out);
     }
@@ -301,7 +301,7 @@ class GNF5_SEO {
         $d['slug']=self::limit_slug($d['slug'],75);
 
         $meta=trim((string)($d['meta_description']??''));
-        if(!self::contains_exact_phrase($meta,$kw))$meta=$kw.' — '.$meta;
+        if(!self::contains_exact_phrase($meta,$kw))$meta=$kw.' â€” '.$meta;
         if(self::char_len($meta)<120){
             $extra=trim((string)($d['excerpt']??''));
             if($extra)$meta.=' '.$extra;
@@ -315,10 +315,10 @@ class GNF5_SEO {
         $d['meta_description']=$meta;
 
         if(isset($d['image_alts'][0]) && !self::contains_exact_phrase($d['image_alts'][0],$kw)){
-            $d['image_alts'][0]=$kw.' — original editorial image';
+            $d['image_alts'][0]=$kw.' â€” original editorial image';
         }
         if(isset($d['image_alts'][0],$d['image_alts'][1]) && strcasecmp(trim((string)$d['image_alts'][0]),trim((string)$d['image_alts'][1]))===0){
-            $d['image_alts'][1]=sanitize_text_field(((string)($d['title']??'Article')).' — supporting editorial image');
+            $d['image_alts'][1]=sanitize_text_field(((string)($d['title']??'Article')).' â€” supporting editorial image');
         }
         return $d;
     }
@@ -654,15 +654,23 @@ class GNF5_SEO {
     public static function save_rank_math($post_id,$d){
         if(empty(GNF5_Utils::settings()['rankmath_enabled']))return;
         $d=self::normalize_metadata($d);
-        update_post_meta($post_id,'rank_math_title',$d['seo_title']);
-        update_post_meta($post_id,'rank_math_description',$d['meta_description']);
-        update_post_meta($post_id,'rank_math_focus_keyword',$d['focus_keyword']);
-        update_post_meta($post_id,'rank_math_facebook_title',$d['seo_title']);
-        update_post_meta($post_id,'rank_math_facebook_description',$d['meta_description']);
-        update_post_meta($post_id,'rank_math_twitter_title',$d['seo_title']);
-        update_post_meta($post_id,'rank_math_twitter_description',$d['meta_description']);
+        $values=array('rank_math_title'=>$d['seo_title'],'rank_math_description'=>$d['meta_description'],
+            'rank_math_focus_keyword'=>$d['focus_keyword'],'rank_math_facebook_title'=>$d['seo_title'],
+            'rank_math_facebook_description'=>$d['meta_description'],'rank_math_twitter_title'=>$d['seo_title'],
+            'rank_math_twitter_description'=>$d['meta_description']);
         $cats=wp_get_post_categories($post_id);
-        if(!empty($cats[0]))update_post_meta($post_id,'rank_math_primary_category',absint($cats[0]));
+        if(!empty($cats[0]))$values['rank_math_primary_category']=absint($cats[0]);
+        $written=(array)get_post_meta($post_id,'_gnf5_rankmath_written',true);
+        foreach($values as $key=>$value){
+            $current=get_post_meta($post_id,$key,true);
+            // Only replace empty values or values still owned by this writer.
+            // Legacy/custom metadata without an ownership record is preserved.
+            if($current==='' || (array_key_exists($key,$written) && (string)$current===(string)$written[$key])){
+                update_post_meta($post_id,$key,$value);
+                $written[$key]=$value;
+            }
+        }
+        update_post_meta($post_id,'_gnf5_rankmath_written',$written);
     }
 
     private static function faq_question_count($content){
@@ -741,16 +749,16 @@ class GNF5_SEO {
         $settings=GNF5_Utils::settings();
         $content=get_post_field('post_content',$post_id);
         $plain=wp_strip_all_tags($content);
-        // The user's 1000–1200 rule applies to the written article body, not generated
+        // The user's 1000â€“1200 rule applies to the written article body, not generated
         // navigation such as TOC/Related Reading/Useful Resources.
         $main_html=(string)($d['content_html']??'');
         $main_plain=wp_strip_all_tags($main_html);
         $wc=GNF5_Utils::word_count($main_html);
-        if($wc<1000||$wc>1200)$errors[]='Article body must be 1000–1200 words; found '.$wc.'.';
+        if($wc<1000||$wc>1200)$errors[]='Article body must be 1000â€“1200 words; found '.$wc.'.';
 
         $kw=trim((string)($d['focus_keyword']??''));
         if(!$kw)$errors[]='Focus keyword is missing.';
-        else{$kw_words=GNF5_Utils::word_count($kw);if($kw_words<1||$kw_words>3)$errors[]='Focus keyword must be 1–3 words for natural Rank Math optimization.';}
+        else{$kw_words=GNF5_Utils::word_count($kw);if($kw_words<1||$kw_words>3)$errors[]='Focus keyword must be 1â€“3 words for natural Rank Math optimization.';}
         $rm_kw=trim((string)get_post_meta($post_id,'rank_math_focus_keyword',true));
         $rm_desc=trim((string)get_post_meta($post_id,'rank_math_description',true));
         $rm_title=trim((string)get_post_meta($post_id,'rank_math_title',true));
@@ -780,18 +788,18 @@ class GNF5_SEO {
         if($kw&&!self::contains_exact_phrase($conclusion_words,$kw))$errors[]='Focus keyword missing from conclusion/final section.';
 
         $density=$kw?self::keyword_density($main_html,$kw):0;
-        if($kw&&($density<1.00||$density>1.50))$errors[]='Keyword density outside Rank Math target 1.00–1.50% ('.number_format($density,2).'%).';
+        if($kw&&($density<1.00||$density>1.50))$errors[]='Keyword density outside Rank Math target 1.00â€“1.50% ('.number_format($density,2).'%).';
 
         $seo_len=self::char_len((string)$d['seo_title']);
         if($seo_len>60)$errors[]='SEO title exceeds 60 characters; found '.$seo_len.'.';
-        if($seo_len<35)$warnings[]='SEO title is unusually short; target roughly 45–60 characters when natural.';
+        if($seo_len<35)$warnings[]='SEO title is unusually short; target roughly 45â€“60 characters when natural.';
         if(!self::has_number($d['seo_title']))$errors[]='SEO title does not contain a number/year.';
         if(!self::has_power_word($d['seo_title']))$errors[]='SEO title does not contain a recognized power word.';
         if(!self::has_sentiment_word($d['seo_title']))$errors[]='SEO title does not contain one truthful positive or negative sentiment word.';
         if(!self::title_is_unique($d['seo_title'],$post_id))$errors[]='SEO title is identical or too similar to an existing article.';
 
         $mdlen=self::char_len((string)$d['meta_description']);
-        if($mdlen<120||$mdlen>160)$errors[]='Meta description should be 120–160 characters; found '.$mdlen.'.';
+        if($mdlen<120||$mdlen>160)$errors[]='Meta description should be 120â€“160 characters; found '.$mdlen.'.';
         if(strlen($actual_slug)>75)$errors[]='Actual WordPress slug exceeds 75 characters.';
         $actual_permalink=(string)get_permalink($post_id);
         if($actual_permalink!=='' && self::char_len($actual_permalink)>75){
@@ -810,7 +818,7 @@ class GNF5_SEO {
         if(!empty($settings['toc_enabled']) && !$has_rm_toc)$errors[]='Rank Math Table of Contents block not detected.';
         if(empty($settings['toc_enabled']))$errors[]='Rank Math Table of Contents is disabled in plugin settings.';
         $tags=count(wp_get_post_tags($post_id));
-        if($tags<5||$tags>8)$errors[]='Article should have 5–8 WordPress tags; found '.$tags.'.';
+        if($tags<5||$tags>8)$errors[]='Article should have 5â€“8 WordPress tags; found '.$tags.'.';
 
         if(strpos($content,'<!-- wp:')===false || !function_exists('parse_blocks') || count(parse_blocks($content))<2)$errors[]='Valid Gutenberg block structure was not detected.';
 
