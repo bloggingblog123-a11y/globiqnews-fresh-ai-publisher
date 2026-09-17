@@ -1,0 +1,5 @@
+Run only against a disposable local WordPress installation at http://globiqnews.localhost:8097 with the official Rank Math Free 1.0.278, this plugin, and default Rank Math setup activated. Set WP_ENVIRONMENT_TYPE to local, disable WP-Cron and external HTTP, configure a valid GNF5_NODE_BINARY, and set GNF5_TEST_WP_ROOT to that WordPress directory.
+
+Run php test-rankmath530.php, then php test-repair530.php (not concurrently). The second test mocks Gemini via pre_http_request; it performs no paid API calls. It creates local PNG attachments. These tests create posts, change test settings, and must never run on a live site. The runtime-failure test additionally needs a test-only mu-plugin that removes Rank Math from option_active_plugins for GNF5_TEST_NO_RANKMATH, and test wp-config handling of GNF5_TEST_NO_NODE to select a nonexistent Node path.
+
+Fixtures are article inputs genuinely producing the expected scores in the verified engine. The integration tests execute the installed analyzer; expected values are assertions, never substituted analyzer outputs.

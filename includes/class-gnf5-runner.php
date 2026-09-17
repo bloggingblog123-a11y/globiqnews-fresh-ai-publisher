@@ -21,7 +21,7 @@ class GNF5_Runner {
         // continuation events from the previous target are still working.
         $target=max(1,absint($cs['post_limit']));
         if(!GNF5_Utils::start_cron_chain($cat_id,$target)){
-            GNF5_Utils::log('CRON START SKIPPED — previous automatic target chain is still active for this category.','info',$cat_id);
+            GNF5_Utils::log('CRON START SKIPPED â€” previous automatic target chain is still active for this category.','info',$cat_id);
             return;
         }
         self::cron_continue_category($cat_id,$target,1,0);
@@ -45,14 +45,14 @@ class GNF5_Runner {
                 GNF5_Utils::touch_cron_chain($cat_id,$remaining);
                 $ok=wp_schedule_single_event(time()+90,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$pass,$zero_streak));
                 if($ok){
-                    GNF5_Utils::log('CRON CHUNK DEFERRED — category lock busy; retrying in about 90 seconds.','warning',$cat_id);
+                    GNF5_Utils::log('CRON CHUNK DEFERRED â€” category lock busy; retrying in about 90 seconds.','warning',$cat_id);
                 }else{
                     GNF5_Utils::end_cron_chain($cat_id);
-                    GNF5_Utils::log('CRON CHUNK STOPPED — could not schedule deferred continuation.','error',$cat_id);
+                    GNF5_Utils::log('CRON CHUNK STOPPED â€” could not schedule deferred continuation.','error',$cat_id);
                 }
             }else{
                 GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON CHUNK FAILED — '.$result->get_error_message(),'warning',$cat_id);
+                GNF5_Utils::log('CRON CHUNK FAILED â€” '.$result->get_error_message(),'warning',$cat_id);
             }
             return;
         }
@@ -65,17 +65,17 @@ class GNF5_Runner {
             GNF5_Utils::touch_cron_chain($cat_id,$remaining);
             $ok=wp_schedule_single_event(time()+75,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$next_pass,$zero_streak));
             if($ok){
-                GNF5_Utils::log('CRON CHUNK CONTINUE — '.$remaining.' target post(s) still remaining; next chunk scheduled.','info',$cat_id);
+                GNF5_Utils::log('CRON CHUNK CONTINUE â€” '.$remaining.' target post(s) still remaining; next chunk scheduled.','info',$cat_id);
             }else{
                 GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON TARGET STOPPED — continuation event could not be scheduled.','error',$cat_id);
+                GNF5_Utils::log('CRON TARGET STOPPED â€” continuation event could not be scheduled.','error',$cat_id);
             }
         }elseif($remaining>0){
             GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET STOPPED — no usable new candidate found after repeated chunk attempts; '.$remaining.' target post(s) remain unfilled.','warning',$cat_id);
+            GNF5_Utils::log('CRON TARGET STOPPED â€” no usable new candidate found after repeated chunk attempts; '.$remaining.' target post(s) remain unfilled.','warning',$cat_id);
         }else{
             GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET COMPLETE — automatic category target reached.','success',$cat_id);
+            GNF5_Utils::log('CRON TARGET COMPLETE â€” automatic category target reached.','success',$cat_id);
         }
     }
 
@@ -87,7 +87,7 @@ class GNF5_Runner {
         $posts=GNF5_Utils::auto_recoverable_posts(2);
         if(!$posts)return;
 
-        GNF5_Utils::log('AUTO RECOVERY START — '.count($posts).' failed draft(s) due for retry.','info',0);
+        GNF5_Utils::log('AUTO RECOVERY START â€” '.count($posts).' failed draft(s) due for retry.','info',0);
 
         foreach($posts as $post){
             $post_id=absint($post->ID);
@@ -99,7 +99,7 @@ class GNF5_Runner {
             // A busy category lock is not a real recovery attempt. Defer without consuming one.
             if(is_wp_error($result) && $result->get_error_code()==='locked'){
                 update_post_meta($post_id,'_gnf5_recovery_next',time()+(5*MINUTE_IN_SECONDS));
-                GNF5_Utils::log('AUTO RECOVERY DEFERRED — post #'.$post_id.' category is busy; retrying in about 5 minutes without consuming an attempt.','info',0);
+                GNF5_Utils::log('AUTO RECOVERY DEFERRED â€” post #'.$post_id.' category is busy; retrying in about 5 minutes without consuming an attempt.','info',0);
                 continue;
             }
 
@@ -107,7 +107,7 @@ class GNF5_Runner {
 
             if(!is_wp_error($result) && !empty($result['validated'])){
                 GNF5_Utils::clear_recovery_state($post_id);
-                GNF5_Utils::log('AUTO RECOVERY SUCCESS — post #'.$post_id.' recovered on attempt '.$attempt.'.','success',0);
+                GNF5_Utils::log('AUTO RECOVERY SUCCESS â€” post #'.$post_id.' recovered on attempt '.$attempt.'.','success',0);
                 continue;
             }
 
@@ -118,11 +118,11 @@ class GNF5_Runner {
             if($attempt >= $max){
                 update_post_meta($post_id,'_gnf5_recovery_exhausted',1);
                 delete_post_meta($post_id,'_gnf5_recovery_next');
-                GNF5_Utils::log('AUTO RECOVERY EXHAUSTED — post #'.$post_id.' failed after '.$attempt.' automatic attempts. Manual attention is now shown. '.$message,'warning',0);
+                GNF5_Utils::log('AUTO RECOVERY EXHAUSTED â€” post #'.$post_id.' failed after '.$attempt.' automatic attempts. Manual attention is now shown. '.$message,'warning',0);
             }else{
                 $delay=GNF5_Utils::recovery_delay_for_attempt($attempt+1);
                 update_post_meta($post_id,'_gnf5_recovery_next',time()+$delay);
-                GNF5_Utils::log('AUTO RECOVERY RETRY SCHEDULED — post #'.$post_id.' attempt '.$attempt.' failed; next retry in '.human_time_diff(time(),time()+$delay).'. '.$message,'warning',0);
+                GNF5_Utils::log('AUTO RECOVERY RETRY SCHEDULED â€” post #'.$post_id.' attempt '.$attempt.' failed; next retry in '.human_time_diff(time(),time()+$delay).'. '.$message,'warning',0);
             }
         }
     }
@@ -136,13 +136,13 @@ class GNF5_Runner {
         $cs=GNF5_Utils::category_settings($cat_id,$settings);
 
         if(!GNF5_Utils::acquire_lock($cat_id)){
-            return new WP_Error('locked','This category is already importing. The lock expires automatically after 15 minutes.');
+            return new WP_Error('locked','Another article is processing. Categories and SEO analysis run one at a time; retry shortly.');
         }
         if(function_exists('set_time_limit'))@set_time_limit(300);
 
         $run_limit=$override_limit===null?absint($cs['post_limit']):min(absint($cs['post_limit']),max(1,absint($override_limit)));
         $scan_multiplier=min(4,max(1,absint($scan_multiplier)));
-        GNF5_Utils::log('CATEGORY START — '.$cat->name.' ('.$trigger.'). Target: '.$run_limit.' post(s).','info',$cat_id);
+        GNF5_Utils::log('CATEGORY START â€” '.$cat->name.' ('.$trigger.'). Target: '.$run_limit.' post(s).','info',$cat_id);
 
         $created=0;$published=0;$drafts=0;$attempted=0;$duplicates=0;$failed_before_create=0;$validation_drafts=0;
         $rss_candidates=0;$source_candidates=0;$rss_failures=0;$source_failures=0;
@@ -153,7 +153,8 @@ class GNF5_Runner {
 
         if(!$rss_urls && !$source_urls){
             $message=$cat->name.': no saved RSS Feed or Source URL is configured. Save this category first, then run it.';
-            GNF5_Utils::log('CATEGORY STOP — '.$message,'warning',$cat_id);
+            GNF5_Utils::log('CATEGORY STOP â€” '.$message,'warning',$cat_id);
+            GNF5_Utils::release_lock($cat_id);
             return array(
                 'created'=>0,'published'=>0,'drafts'=>0,'validation_drafts'=>0,'duplicates'=>0,
                 'failed_before_create'=>0,'attempted'=>0,'target'=>$run_limit,'message'=>$message,
@@ -169,7 +170,7 @@ class GNF5_Runner {
             foreach($passes as $pass_no){
                 if($created>=$run_limit)break;
                 $scan=min(150,max(10,$base_scan*$pass_no));
-                GNF5_Utils::log('SCAN PASS '.$pass_no.' — checking up to '.$scan.' candidates per source for '.$cat->name.'.','info',$cat_id);
+                GNF5_Utils::log('SCAN PASS '.$pass_no.' â€” checking up to '.$scan.' candidates per source for '.$cat->name.'.','info',$cat_id);
                 $items=array();
 
                 foreach($rss_urls as $feed_url){
@@ -177,14 +178,14 @@ class GNF5_Runner {
                     $rr=GNF5_Sources::rss_items($feed_url,$scan);
                     if(is_wp_error($rr)){
                         $rss_failures++;
-                        $diag='RSS FAIL — '.$feed_url.' — '.$rr->get_error_message();
+                        $diag='RSS FAIL â€” '.$feed_url.' â€” '.$rr->get_error_message();
                         $diagnostics[$diag]=true;
                         GNF5_Utils::log($diag,'warning',$cat_id);
                         continue;
                     }
                     $count=count($rr);
                     $rss_candidates=max($rss_candidates,$count);
-                    GNF5_Utils::log('RSS OK — '.$feed_url.' — '.$count.' candidate item(s).','info',$cat_id);
+                    GNF5_Utils::log('RSS OK â€” '.$feed_url.' â€” '.$count.' candidate item(s).','info',$cat_id);
                     $items=array_merge($items,$rr);
                 }
 
@@ -193,7 +194,7 @@ class GNF5_Runner {
                     $sr=GNF5_Sources::discover_source($source_url,$scan);
                     if(is_wp_error($sr)){
                         $source_failures++;
-                        $diag='SOURCE FAIL/BLOCKED — '.$source_url.' — '.$sr->get_error_message();
+                        $diag='SOURCE FAIL/BLOCKED â€” '.$source_url.' â€” '.$sr->get_error_message();
                         $diagnostics[$diag]=true;
                         GNF5_Utils::log($diag,'warning',$cat_id);
                         continue;
@@ -201,7 +202,7 @@ class GNF5_Runner {
                     $count=count($sr);
                     $source_candidates=max($source_candidates,$count);
                     $methods=array();foreach($sr as $si){if(!empty($si['method']))$methods[$si['method']]=true;}
-                    GNF5_Utils::log('SOURCE OK — '.$source_url.' — '.$count.' candidate item(s) via '.implode(', ',array_keys($methods)).'.','info',$cat_id);
+                    GNF5_Utils::log('SOURCE OK â€” '.$source_url.' â€” '.$count.' candidate item(s) via '.implode(', ',array_keys($methods)).'.','info',$cat_id);
                     $items=array_merge($items,$sr);
                 }
 
@@ -215,15 +216,15 @@ class GNF5_Runner {
                     $attempted++;
 
                     $dup=GNF5_Utils::duplicate_post_id($u);
-                    if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE — skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
+                    if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE â€” skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
                     if(!GNF5_Utils::acquire_source_lock($u)){
-                        $duplicates++;GNF5_Utils::log('SOURCE BUSY — another category/request is already processing this source; skipped for this run.','info',$cat_id);continue;
+                        $duplicates++;GNF5_Utils::log('SOURCE BUSY â€” another category/request is already processing this source; skipped for this run.','info',$cat_id);continue;
                     }
 
                     try{
                         // Recheck after the atomic source claim to close the simultaneous-category duplicate race.
                         $dup=GNF5_Utils::duplicate_post_id($u);
-                        if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE — skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
+                        if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE â€” skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
                         $item['url']=$u;
                         $result=self::process_article($item,$cat_id,$cs,$trigger);
                     }finally{
@@ -231,7 +232,7 @@ class GNF5_Runner {
                     }
                     if(is_wp_error($result)){
                         $failed_before_create++;
-                        GNF5_Utils::log('SKIPPED BEFORE POST CREATE — '.$u.' — '.$result->get_error_message(),'warning',$cat_id);
+                        GNF5_Utils::log('SKIPPED BEFORE POST CREATE â€” '.$u.' â€” '.$result->get_error_message(),'warning',$cat_id);
                         continue;
                     }
 
@@ -245,7 +246,7 @@ class GNF5_Runner {
             }
 
             if($created<$run_limit){
-                GNF5_Utils::log('TARGET NOT FULLY REACHED — '.$cat->name.' requested '.$run_limit.' but created '.$created.'. No more usable new candidates were available.','warning',$cat_id);
+                GNF5_Utils::log('TARGET NOT FULLY REACHED â€” '.$cat->name.' requested '.$run_limit.' but created '.$created.'. No more usable new candidates were available.','warning',$cat_id);
             }
 
             $no_candidates=($attempted===0);
@@ -264,7 +265,7 @@ class GNF5_Runner {
 
             $message=$cat->name.': target '.$run_limit.' | created '.$created.' | published '.$published.' | draft/pending '.$drafts.' | duplicates '.$duplicates.' | failed before create '.$failed_before_create.'.'.$reason;
             $log_type=$created>0?'success':'warning';
-            GNF5_Utils::log('CATEGORY END — '.$message,$log_type,$cat_id);
+            GNF5_Utils::log('CATEGORY END â€” '.$message,$log_type,$cat_id);
             return array(
                 'created'=>$created,'published'=>$published,'drafts'=>$drafts,'validation_drafts'=>$validation_drafts,
                 'duplicates'=>$duplicates,'failed_before_create'=>$failed_before_create,'attempted'=>$attempted,'target'=>$run_limit,'message'=>$message,
@@ -310,7 +311,7 @@ class GNF5_Runner {
             $url=$resolved_url;
         }
         $source_words=GNF5_Utils::word_count($source['text']);
-        GNF5_Utils::log('EXTRACTED — '.$source_words.' source words via '.$source['method'].' — '.$url,'info',$cat_id);
+        GNF5_Utils::log('EXTRACTED â€” '.$source_words.' source words via '.$source['method'].' â€” '.$url,'info',$cat_id);
         if($source_words<80)return new WP_Error('thin_source','Insufficient source facts (under 80 words).');
 
         $article=GNF5_Writer::create_article($source,$cat_id);
@@ -373,7 +374,7 @@ class GNF5_Runner {
                     $partial=$images->get_error_data();
                     GNF5_Utils::set_state($post_id,'image_pending','Image generation incomplete: '.$images->get_error_message());
                     update_post_meta($post_id,'_gnf5_validation_errors',array('Image generation incomplete: '.$images->get_error_message()));
-                    GNF5_Utils::log('DRAFT #'.$post_id.' — image generation incomplete. Successful image(s) are checkpointed; Retry will generate only missing image(s). '.$images->get_error_message(),'error',$cat_id);
+                    GNF5_Utils::log('DRAFT #'.$post_id.' â€” image generation incomplete. Successful image(s) are checkpointed; Retry will generate only missing image(s). '.$images->get_error_message(),'error',$cat_id);
                     return array('post_id'=>$post_id,'status'=>'draft','validated'=>false,'errors'=>array($images->get_error_message()));
                 }
                 $image_ids=$images;
@@ -399,41 +400,71 @@ class GNF5_Runner {
             update_post_meta($post_id,'_gnf5_final_word_count',$check['word_count']);
             update_post_meta($post_id,'_gnf5_keyword_density',$check['density']);
 
-            $desired=GNF5_Utils::desired_success_status($is_recovery);
-            if($desired==='publish'){
-                // Score waiting is independent of AI recovery: never regenerate a completed
-                // article merely because Rank Math has not calculated its score yet.
-                if(get_post_status($post_id)!=='draft'){
-                    $draft=self::update_post_checked(array('ID'=>$post_id,'post_status'=>'draft'),'Score gate draft checkpoint');
-                    if(is_wp_error($draft))throw new RuntimeException($draft->get_error_message());
-                }
-                GNF5_Publish::wait_for_score($post_id,$is_recovery);
-                $final_status=get_post_status($post_id);
-                GNF5_Utils::log(strtoupper($final_status).' #'.$post_id.' — article ready; waiting for Rank Math SEO score 80 or higher.','info',$cat_id);
-                return array('post_id'=>$post_id,'status'=>$final_status,'validated'=>true,'awaiting_rankmath'=>$final_status!=='publish','errors'=>array(),'warnings'=>$check['warnings']);
+            // Scoring also runs with Auto Publish off. Every failure remains Draft.
+            if(get_post_status($post_id)!=='draft'){
+                $draft=self::update_post_checked(array('ID'=>$post_id,'post_status'=>'draft'),'Score gate draft checkpoint');
+                if(is_wp_error($draft))throw new RuntimeException($draft->get_error_message());
             }
-            if($desired!==get_post_status($post_id)){
-                $status_update=self::update_post_checked(array('ID'=>$post_id,'post_status'=>$desired),'Final post-status update');
-                if(is_wp_error($status_update))throw new RuntimeException($status_update->get_error_message());
-            }
+            update_post_meta($post_id,'_gnf5_seo_repair_source',GNF5_Publish::fingerprint($post_id));
+            GNF5_Publish::wait_for_score($post_id,$is_recovery);
             $final_status=get_post_status($post_id);
-            if($final_status==='publish'){
-                update_post_meta($post_id,'_gnf5_auto_published',1);
-                update_post_meta($post_id,'_gnf5_auto_published_at',time());
-                update_post_meta($post_id,'_gnf5_publish_gate','passed');
-            }else{
-                update_post_meta($post_id,'_gnf5_publish_gate','processed-not-published');
-            }
-            GNF5_Utils::set_state($post_id,'complete','Article processing complete; final status '.$final_status.'.');
-            delete_post_meta($post_id,'_gnf5_source_facts'); // remove temporary recovery text after success to reduce storage
-            GNF5_Utils::log(strtoupper($final_status).' #'.$post_id.' — article processing complete. '.$check['word_count'].' words; keyword density '.number_format($check['density'],2).'%.','success',$cat_id);
-            return array('post_id'=>$post_id,'status'=>$final_status,'validated'=>true,'errors'=>array(),'warnings'=>$check['warnings']);
+            return array('post_id'=>$post_id,'status'=>$final_status,'validated'=>true,'awaiting_rankmath'=>$final_status==='draft','errors'=>array(),'warnings'=>$check['warnings']);
 
         } catch(Throwable $e) {
             GNF5_Utils::set_state($post_id,'post_processing_failed','Post-processing error: '.$e->getMessage());
             update_post_meta($post_id,'_gnf5_validation_errors',array('Post-processing error: '.$e->getMessage()));
-            GNF5_Utils::log('DRAFT #'.$post_id.' — article remains saved; post-processing failed and can be retried: '.$e->getMessage(),'error',$cat_id);
+            GNF5_Utils::log('DRAFT #'.$post_id.' â€” article remains saved; post-processing failed and can be retried: '.$e->getMessage(),'error',$cat_id);
             return array('post_id'=>$post_id,'status'=>'draft','validated'=>false,'errors'=>array($e->getMessage()),'warnings'=>array());
+        }
+    }
+
+    /** One bounded improvement of an unchanged generated article, using actual failed tests. */
+    public static function repair_scored_post($post_id) {
+        $source=GNF5_Publish::fingerprint($post_id);
+        if(get_post_status($post_id)!=='draft' || get_post_meta($post_id,'_gnf5_seo_repair_source',true)!==$source
+            || (int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=1) return false;
+        $article=get_post_meta($post_id,'_gnf5_article_data',true);
+        $facts=get_post_meta($post_id,'_gnf5_source_facts',true);
+        if(!is_array($article) || !$facts || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
+        $owned=(array)get_post_meta($post_id,'_gnf5_rankmath_written',true);
+        foreach(array('rank_math_title','rank_math_description','rank_math_focus_keyword') as $key){
+            if(!isset($owned[$key]) || (string)get_post_meta($post_id,$key,true)!==(string)$owned[$key])return false;
+        }
+        $errors=array('Keep 1000â€“1200 words, the same source facts and focus keyword. Improve only genuine SEO issues; do not keyword-stuff.');
+        foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
+            // Content AI is a separate paid service; the word target remains 1000â€“1200.
+            if(in_array($name,array('hasContentAI','lengthContent'),true))continue;
+            if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
+        }
+        $cats=wp_get_post_categories($post_id); $cat_id=(int)($cats[0]??0);
+        update_post_meta($post_id,'_gnf5_seo_repair_attempts',1);
+        GNF5_Utils::touch_lock($cat_id);
+        try{
+            $repaired=GNF5_Writer::repair_for_validation($article,$facts,$errors,$cat_id);
+            if(is_wp_error($repaired))throw new RuntimeException($repaired->get_error_message());
+            if(get_post_status($post_id)!=='draft' || GNF5_Publish::fingerprint($post_id)!==$source)return false;
+            $repaired=GNF5_SEO::normalize_metadata($repaired);
+            if($repaired['focus_keyword']!==$article['focus_keyword'])throw new RuntimeException('SEO repair changed the focus keyword; original article retained.');
+            $words=GNF5_Utils::word_count($repaired['content_html']);
+            if($words<1000 || $words>1200)throw new RuntimeException('SEO repair did not meet the 1000â€“1200 word requirement; original article retained.');
+            $image_ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);
+            $content=self::compose_content($post_id,$repaired,$image_ids,$cat_id,GNF5_Utils::category_settings($cat_id),(string)get_post_meta($post_id,'_gnf5_source_url',true));
+            GNF5_Publish::reset($post_id);
+            $saved=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$repaired['title'],'post_name'=>$repaired['slug'],
+                'post_excerpt'=>$repaired['excerpt'],'post_content'=>$content,'tags_input'=>$repaired['tags']),'SEO improvement');
+            if(is_wp_error($saved))throw new RuntimeException($saved->get_error_message());
+            foreach($image_ids as $index=>$image_id){
+                if(isset($repaired['image_alts'][$index]))update_post_meta($image_id,'_wp_attachment_image_alt',sanitize_text_field($repaired['image_alts'][$index]));
+            }
+            update_post_meta($post_id,'_gnf5_article_data',$repaired);
+            update_post_meta($post_id,'_gnf5_final_word_count',$words);
+            GNF5_SEO::save_rank_math($post_id,$repaired);
+            GNF5_Utils::touch_lock($cat_id);
+            GNF5_Utils::log('SEO improvement saved for #'.$post_id.'; existing images reused. Re-analyzing final article.','info',$cat_id);
+            return true;
+        }catch(Throwable $e){
+            GNF5_Utils::log('SEO improvement stopped for #'.$post_id.': '.$e->getMessage(),'warning',$cat_id);
+            return false;
         }
     }
 
@@ -591,7 +622,7 @@ class GNF5_Runner {
             $q[$post_id]['message']='Repairing this draft now. Other selected drafts are waiting.';
             self::bulk_queue_save($q);
 
-            GNF5_Utils::log('BULK RETRY — selected draft #'.$post_id.' is being processed one-by-one.','info',0);
+            GNF5_Utils::log('BULK RETRY â€” selected draft #'.$post_id.' is being processed one-by-one.','info',0);
             $result=self::retry_post($post_id);
 
             $q=self::bulk_queue_load();
@@ -671,7 +702,7 @@ class GNF5_Runner {
                 if(!is_wp_error($source))$source_text=$source['text'];
             }
             $cs=GNF5_Utils::category_settings($cat_id);
-            GNF5_Utils::log('RETRY START — post #'.$post_id.'. Existing successful images/state will be reused.','info',$cat_id);
+            GNF5_Utils::log('RETRY START â€” post #'.$post_id.'. Existing successful images/state will be reused.','info',$cat_id);
             return self::finalize_post($post_id,$article,$source_text,$cat_id,$cs,true);
         }finally{
             GNF5_Utils::release_lock($cat_id);

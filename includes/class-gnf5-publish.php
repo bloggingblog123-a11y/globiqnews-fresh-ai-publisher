@@ -15,6 +15,8 @@ class GNF5_Publish {
     }
 
     public static function reset($post_id) {
+        GNF5_RankMath::invalidate($post_id);
+        wp_clear_scheduled_hook(GNF5_RankMath::HOOK,array((int)$post_id));
         delete_post_meta($post_id, '_gnf5_validated_fingerprint');
         delete_post_meta($post_id, '_gnf5_score_fingerprint');
         // Regeneration/repair changes the article: never reuse its previous score.
@@ -22,7 +24,7 @@ class GNF5_Publish {
         unset(self::$changed_scores[$post_id]);
     }
 
-    private static function fingerprint($post_id) {
+    public static function fingerprint($post_id) {
         $data = array();
         foreach (array('post_title','post_name','post_content','post_excerpt') as $field) {
             $data[$field] = get_post_field($field, $post_id);
@@ -31,7 +33,8 @@ class GNF5_Publish {
             '_gnf5_article_data','_gnf5_image_ids','_thumbnail_id','_gnf5_source_url') as $key) {
             $data[$key] = get_post_meta($post_id, $key, true);
         }
-        foreach ((array) $data['_gnf5_image_ids'] as $id) {
+        $image_ids = array_unique(array_merge((array)$data['_gnf5_image_ids'],array((int)$data['_thumbnail_id'])));
+        foreach ($image_ids as $id) {
             $data['alt_' . $id] = get_post_meta($id, '_wp_attachment_image_alt', true);
         }
         $data['categories'] = wp_get_post_categories($post_id);
@@ -47,18 +50,20 @@ class GNF5_Publish {
         update_post_meta($post_id, '_gnf5_publish_gate', 'waiting-rankmath-80');
         GNF5_Utils::clear_recovery_state($post_id);
         self::waiting_message($post_id);
-        self::maybe_publish($post_id);
+        GNF5_RankMath::run($post_id);
     }
 
     private static function waiting_message($post_id) {
         $score = self::score($post_id);
         $message = 'Waiting for a saved Rank Math SEO score of at least 80; current score: '
-            . ($score === null ? 'not available' : $score) . '. Open the draft in the Rank Math editor and save it to calculate the score.';
+            . ($score === null ? 'not available' : $score) . '. Background Rank Math analysis pending.';
         GNF5_Utils::set_state($post_id, 'awaiting_rankmath', $message);
     }
 
     public static function score_saved($meta_id, $post_id, $key, $value) {
-        if ($key !== 'rank_math_seo_score' || get_post_meta($post_id, '_gnf5_generated_by', true) !== 'fresh-v5') { return; }
+        if (get_post_meta($post_id, '_gnf5_generated_by', true) !== 'fresh-v5') { return; }
+        if ($key === 'rank_math_seo_score' && GNF5_RankMath::score_written_by_worker()) { return; }
+        if(strpos($key,'rank_math_')!==0 && !in_array($key,array('_thumbnail_id','_gnf5_image_ids'),true))return;
         // Wait until the whole editor/REST save completes before checking the gate.
         self::$changed_scores[$post_id] = true;
     }
@@ -71,6 +76,7 @@ class GNF5_Publish {
     }
 
     public static function post_saved($post_id) {
+        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id) || (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE)) { return; }
         if (get_post_type($post_id) === 'post'
             && get_post_meta($post_id, '_gnf5_generated_by', true) === 'fresh-v5') {
             self::$changed_scores[$post_id] = true;
@@ -81,8 +87,18 @@ class GNF5_Publish {
         $ids = array_keys(self::$changed_scores);
         self::$changed_scores = array();
         foreach ($ids as $post_id) {
-            if (self::score($post_id) === null) { continue; }
-            self::maybe_publish($post_id);
+            if (get_post_status($post_id)!=='draft') continue;
+            if (GNF5_RankMath::fresh($post_id)) { self::maybe_publish($post_id); }
+            else {
+                GNF5_RankMath::invalidate($post_id);
+                // A content change starts a new bounded analysis cycle, never a rewrite.
+                if (get_post_meta($post_id,'_gnf5_seo_attempt_source',true)!==self::fingerprint($post_id)) {
+                    GNF5_RankMath::reset_retry($post_id);
+                    update_post_meta($post_id,'_gnf5_seo_attempt_source',self::fingerprint($post_id));
+                }
+                update_post_meta($post_id,'_gnf5_seo_status','SEO SCORE PENDING');
+                GNF5_RankMath::schedule($post_id,5);
+            }
         }
     }
 
@@ -95,7 +111,6 @@ class GNF5_Publish {
         );
         if ($eligible_only) {
             $meta[] = array('key'=>'_gnf5_state','value'=>array('awaiting_rankmath','complete','validation_failed'),'compare'=>'IN');
-            $meta[] = array('key'=>'rank_math_seo_score','value'=>array(self::MIN_SCORE,100),'compare'=>'BETWEEN','type'=>'DECIMAL(10,4)');
         }
         return get_posts(array('post_type'=>'post','post_status'=>'draft','numberposts'=>$limit,
             'orderby'=>'ID','order'=>'ASC','offset'=>absint($offset),'meta_query'=>$meta));
@@ -105,13 +120,9 @@ class GNF5_Publish {
         return self::check_saved_scores();
     }
 
-    public static function check_saved_scores($limit = 50) {
+    public static function check_saved_scores($limit = 5, $manual_retry = false) {
         $result = array('reviewed'=>0, 'published'=>0, 'blocked'=>0, 'reasons'=>array());
-        if (GNF5_Utils::desired_success_status(false) !== 'publish') {
-            $result['reasons'][] = 'Auto Publish is OFF. Enable it and click Save Settings first.';
-            return $result;
-        }
-        $limit = max(1, min(100, absint($limit)));
+        $limit = max(1, min(5, absint($limit)));
         $offset = absint(get_option('gnf5_score_scan_offset', 0));
         $posts = self::waiting_posts($limit, true, $offset);
         if (!$posts && $offset) {
@@ -120,7 +131,8 @@ class GNF5_Publish {
         }
         foreach ($posts as $post) {
             $result['reviewed']++;
-            if (self::maybe_publish($post->ID)) { $result['published']++; }
+            if($manual_retry)GNF5_RankMath::reset_retry($post->ID);
+            if (GNF5_RankMath::run($post->ID)) { $result['published']++; }
             else {
                 $result['blocked']++;
                 if (count($result['reasons']) < 5) {
@@ -147,9 +159,10 @@ class GNF5_Publish {
         if (GNF5_Utils::desired_success_status(false) !== 'publish') { return 'Auto Publish is OFF. Save the enabled setting first.'; }
         $recovered = $state === 'validation_failed' || (bool) get_post_meta($post_id, '_gnf5_publish_is_recovery', true);
         if (GNF5_Utils::desired_success_status($recovered) !== 'publish') { return 'Auto-publish recovered drafts is OFF. Enable it and save settings.'; }
-        if (!defined('RANK_MATH_VERSION')) { return 'Rank Math is not active.'; }
+        if (!GNF5_RankMath::available()) { return 'Rank Math is not active.'; }
         $score = self::score($post_id);
-        if ($score === null) { return 'No valid saved Rank Math score. Save the article in the editor first.'; }
+        if ($score === null) { return 'SEO SCORE PENDING: no valid numeric Rank Math result for this article.'; }
+        if (!GNF5_RankMath::fresh($post_id)) { return 'SEO SCORE PENDING: saved score is unverified or stale; final content must be analyzed again.'; }
         if ($score < self::MIN_SCORE) { return 'Saved Rank Math score is ' . $score . '/100; at least 80 is required.'; }
         return '';
     }
@@ -162,6 +175,29 @@ class GNF5_Publish {
     }
 
     public static function maybe_publish($post_id) {
+        $reason=self::blocked_reason($post_id);
+        if($reason!=='')return self::remember_block($post_id,$reason);
+        $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
+        $owned=GNF5_Utils::owns_lock($cat_id);
+        if(!$owned&&!GNF5_Utils::acquire_lock($cat_id))return self::remember_block($post_id,'Another article worker is active; publishing is deferred.');
+        try{return self::publish_locked($post_id);}
+        finally{if(!$owned)GNF5_Utils::release_lock($cat_id);}
+    }
+
+    public static function guard_status($data,$postarr) {
+        $post_id=(int)($postarr['ID']??0);
+        if(($data['post_status']??'')!=='publish' || empty(self::$publishing[$post_id]))return $data;
+        foreach(array('post_title','post_name','post_content','post_excerpt') as $field){
+            if(wp_unslash($data[$field]??'')!==get_post_field($field,$post_id)){
+                $data['post_status']='draft';
+                return $data;
+            }
+        }
+        if(!GNF5_RankMath::fresh($post_id))$data['post_status']='draft';
+        return $data;
+    }
+
+    private static function publish_locked($post_id) {
         if (isset(self::$publishing[$post_id])) { return false; }
         $reason = self::blocked_reason($post_id);
         if ($reason !== '') { return self::remember_block($post_id, $reason); }
@@ -194,7 +230,7 @@ class GNF5_Publish {
             delete_post_meta($post_id, '_gnf5_publish_wait_reason');
             GNF5_Utils::set_state($post_id, 'complete', 'Published with Rank Math SEO score ' . $score . '.');
             delete_post_meta($post_id, '_gnf5_source_facts');
-            GNF5_Utils::log('PUBLISHED #' . $post_id . ' — Rank Math SEO score ' . $score . '/100.', 'success');
+            GNF5_Utils::log('PUBLISHED #' . $post_id . ' â€” Rank Math SEO score ' . $score . '/100.', 'success');
             return true;
         } catch (Throwable $e) {
             GNF5_Utils::log('Auto Publish deferred for #' . $post_id . ': ' . $e->getMessage(), 'error');

@@ -47,7 +47,7 @@ class GNF5_Utils {
 
         // Upgrade migration: preserve the behavior of V5.11's legacy Final Status setting.
         if (!$had_auto_publish) {
-            $legacy = in_array(($saved['post_status'] ?? 'draft'), array('draft','pending','publish'), true) ? $saved['post_status'] : 'draft';
+            $legacy = in_array(($saved['post_status'] ?? 'draft'), array('draft','pending','publish'), true) ? ($saved['post_status'] ?? 'draft') : 'draft';
             $settings['auto_publish_enabled'] = ($legacy === 'publish') ? 1 : 0;
             $settings['validated_success_status'] = ($legacy === 'pending') ? 'pending' : 'draft';
             $settings['auto_publish_recovered'] = 1;
@@ -282,7 +282,7 @@ class GNF5_Utils {
 
     public static function word_count($html) {
         $text = html_entity_decode(wp_strip_all_tags((string)$html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        if (preg_match_all('/\b[\p{L}\p{N}][\p{L}\p{N}\'’\-]*\b/u', $text, $m)) {
+        if (preg_match_all('/\b[\p{L}\p{N}][\p{L}\p{N}\'â€™\-]*\b/u', $text, $m)) {
             return count($m[0]);
         }
         return str_word_count($text);
@@ -333,6 +333,7 @@ class GNF5_Utils {
     }
 
     public static function deactivate() {
+        if(class_exists('GNF5_RankMath'))wp_unschedule_hook(GNF5_RankMath::HOOK);
         wp_clear_scheduled_hook(GNF5_CRON_HOOK);
         if (defined('GNF5_RECOVERY_CRON_HOOK')) { wp_clear_scheduled_hook(GNF5_RECOVERY_CRON_HOOK); }
         if (defined('GNF5_CRON_CONTINUE_HOOK')) { wp_clear_scheduled_hook(GNF5_CRON_CONTINUE_HOOK); }
@@ -482,15 +483,36 @@ class GNF5_Utils {
         if($legacy)delete_transient($key);
 
         $token=wp_generate_uuid4();
-        $state=array('time'=>time(),'token'=>$token);
+        $state=array('time'=>time(),'token'=>$token,'category'=>$cat_id);
+        // One worker across categories, manual imports, recovery and SEO retries.
+        $global='gnf5_article_worker';
+        if(!add_option($global,$state,'','no')){
+            $old=get_option($global,array());
+            if(self::lock_fresh($old,1800))return false;
+            self::delete_lock_value($global,$old);
+            if(!add_option($global,$state,'','no'))return false;
+        }
         if(!add_option($key,$state,'','no')){
             $existing=get_option($key,array());
-            if(self::lock_fresh($existing,900))return false;
-            delete_option($key);
-            if(!add_option($key,$state,'','no'))return false;
+            if(self::lock_fresh($existing,900)){self::delete_lock_value($global,$state);return false;}
+            self::delete_lock_value($key,$existing);
+            if(!add_option($key,$state,'','no')){self::delete_lock_value($global,$state);return false;}
         }
         self::$lock_tokens[$cat_id]=$token;
         return true;
+    }
+
+    private static function delete_lock_value($key,$value) {
+        global $wpdb;
+        $deleted=$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name=%s AND option_value=%s",$key,maybe_serialize($value)));
+        if($deleted){wp_cache_delete($key,'options');wp_cache_delete('alloptions','options');}
+        return (bool)$deleted;
+    }
+
+    public static function owns_lock($cat_id) {
+        $token=self::$lock_tokens[absint($cat_id)]??'';
+        $global=get_option('gnf5_article_worker',array());
+        return $token!=='' && is_array($global) && hash_equals((string)($global['token']??''),$token);
     }
 
     public static function touch_lock($cat_id) {
@@ -502,6 +524,10 @@ class GNF5_Utils {
         if(!is_array($existing) || !hash_equals((string)($existing['token']??''),(string)$token))return false;
         $existing['time']=time();
         update_option($key,$existing,false);
+        $global=get_option('gnf5_article_worker',array());
+        if(is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){
+            $global['time']=time();update_option('gnf5_article_worker',$global,false);
+        }
         return true;
     }
 
@@ -512,14 +538,18 @@ class GNF5_Utils {
         $existing=get_option($key,array());
         // Never delete a lock acquired later by another request after this request became stale.
         if($token!=='' && is_array($existing) && hash_equals((string)($existing['token']??''),(string)$token)){
-            delete_option($key);
+            self::delete_lock_value($key,$existing);
         }
+        $global=get_option('gnf5_article_worker',array());
+        if($token!==''&&is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){self::delete_lock_value('gnf5_article_worker',$global);}
         unset(self::$lock_tokens[$cat_id]);
         delete_transient($key); // legacy cleanup only
     }
 
     public static function force_clear_lock($cat_id) {
         $cat_id=absint($cat_id);
+        $global=get_option('gnf5_article_worker',array());
+        if(is_array($global)&&(int)($global['category']??-1)===$cat_id&&!self::lock_fresh($global,1800)){self::delete_lock_value('gnf5_article_worker',$global);}
         delete_option(self::lock_key($cat_id));
         delete_transient(self::lock_key($cat_id));
         unset(self::$lock_tokens[$cat_id]);
