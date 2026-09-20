@@ -1,3 +1,18 @@
+Version 5.31.0 - HTTPS scoring for shared hosting
+
+Adds an optional authenticated HTTPS service so WordPress can obtain genuine
+background Rank Math scores without Node.js or PHP proc_open on its host.
+Uses the same verified Rank Math Free 1.0.278 analyzer and WordPress dependencies;
+the supplied runtime is verified against WordPress 7.1. Different hashes fail closed.
+Requests/results are authenticated and bound to unique IDs and the final article.
+Remote mode requires saved article-sharing permission. API keys, passwords, local
+paths and executable code are excluded. One bounded worker performs analysis.
+The service does not store articles or publish posts. Logs exclude article data.
+Cold starts, timeouts and invalid responses leave Draft, with at most 3 attempts.
+Adds service settings and a Render Free deployment template. Existing settings,
+API keys and categories persist. See TEST-REPORT-5.31.0.md and scoring-service/README.md.
+This staging candidate is not yet verified on the user's live MilesWeb site.
+
 Version 5.30.0 - Genuine background Rank Math analysis
 
 Runs the installed Rank Math Free 1.0.278 analyzer with Node.js after final article
@@ -155,7 +170,7 @@ This is not a live WordPress/Rank Math integration test on your website.
 Historical release notes below describe previous versions; V5.26 rules above
 supersede their earlier publish-only-after-strict-validation descriptions.
 
-GlobiqNews Fresh AI Publisher V5.25 â€” Bulk Recovery Queue
+GlobiqNews Fresh AI Publisher V5.25 — Bulk Recovery Queue
 
 This build was made after another full section-by-section audit of V5.20. V5.21 moves the WordPress Draft checkpoint ahead of optional Gemini repair calls, adds atomic category/source concurrency claims, makes active processing recoverable after hard interruption, fixes the real image retry-before-fallback behavior, strengthens source redirect handling, and hardens the 2-image/link pipeline. See CHECK-AUDIT-V5.21.txt for the current audit.
 
@@ -164,7 +179,7 @@ Corrections beyond V5.12:
 - Category discovery ignores nav/header/footer/sidebar links and strongly prefers paths matching the configured category URL.
 - External links now insert only statuses OK or RESTRICTED; broken/unavailable links are skipped.
 - Source URL comparison handles trailing-slash/resource variants more safely.
-- 1000â€“1200 word validation now measures the actual written article body, not generated TOC/Related Reading/Useful Resources navigation.
+- 1000–1200 word validation now measures the actual written article body, not generated TOC/Related Reading/Useful Resources navigation.
 - First-10%, conclusion, heading, FAQ and paragraph readability checks now inspect the article body rather than generated navigation.
 - Rank Math TOC serialization now follows Rank Math's current converter structure more closely: minimal heading attributes and no extra TOC div ID.
 - Gutenberg list blocks now use nested core/list-item blocks to reduce "unexpected or invalid content" errors.
@@ -178,7 +193,7 @@ All V5.12 features remain, including V5.9 automatic recovery, V5.11 RSS/Source/E
 
 Important: the plugin performs its own strict Rank Math-style validation and writes Rank Math metadata. Rank Math's Content AI is separate, and Rank Math's internal analyzer/power-word dictionary can change between plugin releases; no third-party plugin can honestly guarantee every Rank Math UI test will always show green without running that exact Rank Math analyzer at runtime.
 
-GlobiqNews Fresh AI Publisher V5.12 â€” Auto Publish + Full Requirements
+GlobiqNews Fresh AI Publisher V5.12 — Auto Publish + Full Requirements
 
 NEW IN V5.12
 - Dedicated Auto Publish section. Articles are always created as Draft first. Auto Publish happens only after the full strict gate passes.
@@ -190,7 +205,7 @@ NEW IN V5.12
 - All V5.11 verified RSS/Atom, Source URL and Trusted External Link benefits retained.
 - All V5.7 custom instructions and recovery/checkpoint behavior retained.
 
-GlobiqNews Fresh AI Publisher V5.11 â€” Source Verification
+GlobiqNews Fresh AI Publisher V5.11 — Source Verification
 
 Source-system corrections:
 - RSS / Atom: WordPress parser first, raw XML fallback, Atom alternate links preferred over rel=self.
@@ -203,7 +218,7 @@ Source-system corrections:
 - Source article URL is never automatically inserted as a visible external link.
 - All V5.7 Instructions + Recovery behavior remains retained.
 
-GlobiqNews Fresh AI Publisher V5.10 â€” RSS + Source URL Engine Fix
+GlobiqNews Fresh AI Publisher V5.10 — RSS + Source URL Engine Fix
 
 SOURCE ENGINE CHANGES
 - RSS/Atom section: WordPress SimplePie first, direct raw XML fallback second.
@@ -225,20 +240,20 @@ V5.7 INSTRUCTIONS + RECOVERY PRESERVED
 - V5.9 automatic recovery remains enabled/configurable.
 - All existing V5 settings use the same gnf5_fresh_settings option and are preserved on upgrade.
 
-GlobiqNews Fresh AI Publisher V5.9 â€” Automatic Recovery
+GlobiqNews Fresh AI Publisher V5.9 — Automatic Recovery
 
 New in V5.9:
 - Failed image, Rank Math/SEO validation, or post-processing drafts recover automatically.
 - Automatic recovery runs every ~15 minutes through WordPress Cron.
 - Backoff: first retry ~15 minutes, second ~1 hour, third ~6 hours.
-- Default maximum automatic attempts: 3 (configurable 1â€“5 under Advanced source safety & recovery).
+- Default maximum automatic attempts: 3 (configurable 1–5 under Advanced source safety & recovery).
 - Successful images and saved article text are reused; only unfinished work is retried.
 - Drafts are never deleted by recovery.
 - The manual Failed Draft Recovery panel stays hidden unless automatic recovery has exhausted all configured attempts.
 - Manual Retry Now remains available only for drafts that still need attention.
 - Existing V5.8 API keys, category settings, authors, limits, timing, custom instructions, Rank Math rules, 2-image low-storage setup, source safety and logs are preserved.
 
-GlobiqNews Fresh AI Publisher V5.8 â€” Auto-Hide Recovery
+GlobiqNews Fresh AI Publisher V5.8 — Auto-Hide Recovery
 
 V5.8 UI refinement:
 - Failed Draft Recovery is completely hidden when there are zero failed drafts.
@@ -246,7 +261,7 @@ V5.8 UI refinement:
 - If the final recovery item is skipped, the recovery panel hides immediately.
 - All V5.7 settings, custom instructions, API keys, category configuration, retry logic, Rank Math rules, 2-image low-storage system, and recovery engine are preserved.
 
-GlobiqNews Fresh AI Publisher V5.7 â€” Instructions + Recovery
+GlobiqNews Fresh AI Publisher V5.7 — Instructions + Recovery
 
 UPGRADE / SETTINGS
 - V5.7 uses the SAME WordPress settings option as V5.6: gnf5_fresh_settings.
@@ -257,7 +272,7 @@ LOCKED REQUIREMENTS
 - Category-wise isolation: RSS/source URLs never mix categories.
 - Per-category author, target post limit, automatic timing and separate Save Category button.
 - RSS optional; URL-only mode supported.
-- 1000â€“1200 words, target about 1100.
+- 1000–1200 words, target about 1100.
 - Strict Rank Math validation and repair.
 - Unique SEO title; focus keyword placement/density; number/year; power word; one truthful sentiment word; TOC; FAQ; tags; ALT.
 - Exactly 2 generated images total: image 1 featured+inline, image 2 inline.

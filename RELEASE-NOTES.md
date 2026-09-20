@@ -1,27 +1,26 @@
-Version 5.30.0 - Genuine background Rank Math analysis
+# GlobiqNews Fresh AI Publisher 5.31.0 — staging candidate
 
-Runs the installed Rank Math Free 1.0.278 analyzer with Node.js after final article
-text, slug, metadata, links, image attachments and ALT text have been saved.
-The saved numeric score must be verified for those inputs and at least 80 before
-automatic publication. Missing, invalid, stale, failed and lower scores stay Draft.
+Shared hosting without Node.js or PHP proc_open can now use an authenticated HTTPS
+service to run Rank Math's real analyzer. Article generation, images, stored keys,
+categories and the central 80+ publishing gate remain in WordPress.
 
-Adds bounded scoring retries (3 attempts), one optional existing-writer SEO repair,
-metadata preservation, source/engine fingerprints, a central guarded publish path,
-and one article worker across categories. The repair reuses existing images.
-Adds hosting compatibility information, SEO status, retry count and failure reason
-in settings. Saving settings and opening settings no longer perform slow analysis.
-Settings, API keys, category sources, schedules and the GitHub updater are preserved.
+Choose **My HTTPS scoring service** under Auto Publish, enter the service address
+and matching secret, enable article-sharing permission, and save. Final article
+text, SEO metadata, links, image URLs/ALT and analyzer settings are sent for scoring.
+Writer keys and WordPress passwords are excluded. The service does not fetch links,
+store articles or publish posts. WordPress authenticates the result and checks
+that the article has not changed before accepting and saving the genuine score.
 
-Hosting requirements: Node.js 18+ executable, PHP proc_open, writable temporary
-storage and Rank Math Free 1.0.278 with the verified analyzer. Other analyzer
-versions and Rank Math PRO are not yet supported. No guessed score is substituted.
-Use Analyze & Publish 80+ Drafts Now to retry after fixing runtime availability.
+The supplied service matches Rank Math Free **1.0.278** and WordPress **7.1** analysis
+dependencies. Different hashes or engine versions fail closed until verified.
+Local Node scoring remains available on hosts that support it.
 
-Validation: isolated WordPress 7.1 / PHP 8.4.25 / Rank Math 1.0.278; genuine scores
-76,79,80,81,84,85; missing/invalid/noindex/disabled/unavailable states; stale article,
-metadata, taxonomy and ALT changes; 3-attempt bound; category serialization;
-existing finalizer and one-repair path with mocked Gemini transport and real local
-attachments; settings preservation. Actual Gutenberg editor and Posts SEO Details
-both displayed 80/100 for the article scored 80 by the background worker.
-Live MilesWeb execution and third-party editor JavaScript customizations have not
-been verified. Confirm hosting support on staging before enabling live updates.
+See [setup instructions](scoring-service/README.md). Render Free has usage limits
+and cold starts: this is a free testing option, not guaranteed production hosting.
+Unavailable scoring leaves articles Draft, with at most three attempts. Use the
+manual analysis button after restoring the service if the retry budget is exhausted.
+
+Local verification used actual WordPress, genuine analyzer results, real loopback
+HTTP, and PHP proc_open disabled. Live Render deployment and the user's MilesWeb
+installation have not yet been verified. Keep this candidate out of stable automatic
+updates until that test. Existing settings and category data are preserved.

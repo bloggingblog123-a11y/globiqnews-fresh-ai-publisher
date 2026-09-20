@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GlobiqNews Fresh AI Publisher
  * Description: Standalone category-isolated AI publisher with verified RSS/source/external-link engine, Rank Math 80+ score publishing, automatic publish, V5.9 recovery, category-safe source discovery, custom instructions, and 2 original low-storage images.
- * Version: 5.30.0
+ * Version: 5.31.0
  * Plugin URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Update URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Author: GlobiqNews
@@ -12,7 +12,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('GNF5_VERSION', '5.30.0');
+define('GNF5_VERSION', '5.31.0');
 define('GNF5_FILE', __FILE__);
 define('GNF5_DIR', plugin_dir_path(__FILE__));
 define('GNF5_URL', plugin_dir_url(__FILE__));

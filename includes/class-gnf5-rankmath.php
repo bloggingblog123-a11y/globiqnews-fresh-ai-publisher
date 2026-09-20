@@ -1,7 +1,7 @@
 <?php
 if (!defined('ABSPATH')) { exit; }
 
-/** Runs the installed Rank Math analyzer on a committed article, locally in Node.js. */
+/** Runs the verified Rank Math analyzer locally or through an authenticated HTTPS service. */
 class GNF5_RankMath {
     const VERSION = '1.0.278';
     const ENGINE = 'af1e4954b835a846b44d37eb1aa87951475def96bd6f257db1e394afa781e61f';
@@ -29,13 +29,32 @@ class GNF5_RankMath {
         if (!self::available()) { return 'Rank Math unavailable; article stays Draft.'; }
         if (defined('RANK_MATH_PRO_FILE')) { return 'Background analysis for Rank Math PRO has not been verified; article stays Draft.'; }
         if (RANK_MATH_VERSION !== self::VERSION) { return 'Rank Math '.RANK_MATH_VERSION.' is not yet verified. Supported analyzer: '.self::VERSION.'.'; }
-        if (!function_exists('proc_open')) { return 'Background SEO analysis needs PHP proc_open enabled by your host.'; }
-        if (!self::node_binary()) { return 'Background SEO analysis needs Node.js 18+ on this hosting account. Ask your host for the Node binary path; set GNF5_NODE_BINARY in wp-config.php if needed.'; }
         $engine = rank_math()->plugin_dir().'assets/admin/js/analyzer.js';
         if (!is_readable($engine) || hash_file('sha256', $engine) !== self::ENGINE) {
             return 'Rank Math analyzer differs from the verified 1.0.278 engine; article stays Draft.';
         }
+        $settings = GNF5_Utils::settings();
+        if ($settings['seo_analyzer_mode'] === 'remote') {
+            if (empty($settings['seo_service_consent'])) return 'Enable permission to send article data to your scoring service, then save settings.';
+            if (!self::service_url_valid($settings['seo_service_url'])) return 'Enter your scoring service HTTPS address (without a path, query or password).';
+            if (strlen($settings['seo_service_key']) < 32) return 'Enter the scoring service secret (at least 32 characters), then save settings.';
+            return '';
+        }
+        if (!function_exists('proc_open')) { return 'This host blocks local scoring. Configure your HTTPS scoring service below.'; }
+        if (!self::node_binary()) { return 'Node.js is unavailable on this host. Configure an HTTPS scoring service, or set GNF5_NODE_BINARY on a host that supports local Node.js.'; }
         return '';
+    }
+
+    public static function service_url_valid($url) {
+        if (!is_string($url)) return false;
+        $parts = wp_parse_url($url);
+        return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+            && !empty($parts['host']) && strpos($parts['host'], '.') !== false
+            && !filter_var($parts['host'], FILTER_VALIDATE_IP)
+            && !isset($parts['user']) && !isset($parts['pass'])
+            && !isset($parts['query']) && !isset($parts['fragment'])
+            && (!isset($parts['port']) || $parts['port'] === 443)
+            && in_array($parts['path'] ?? '', array('', '/'), true);
     }
 
     /** Build the same inputs as Rank Math, including its PHP customization filters. */
@@ -121,7 +140,7 @@ class GNF5_RankMath {
             $inputs = array('version'=>RANK_MATH_VERSION, 'values'=>$values, 'config'=>$config, 'keywordUsage'=>$keyword_usage, 'scripts'=>$hashes,
                 'source'=>GNF5_Publish::fingerprint($post_id));
             $fingerprint = hash('sha256', wp_json_encode($inputs));
-            return array('version'=>RANK_MATH_VERSION, 'values'=>$values, 'config'=>$config, 'keywordUsage'=>$keyword_usage, 'scripts'=>$scripts, 'fingerprint'=>$fingerprint);
+            return array('version'=>RANK_MATH_VERSION, 'values'=>$values, 'config'=>$config, 'keywordUsage'=>$keyword_usage, 'scripts'=>$scripts, 'scriptHashes'=>$hashes, 'fingerprint'=>$fingerprint);
         } catch (Throwable $e) { return new WP_Error('seo_compatibility', $e->getMessage()); }
         finally {
             remove_filter('rank_math/replacements/non_cacheable', array(__CLASS__, 'non_cacheable'));
@@ -139,6 +158,7 @@ class GNF5_RankMath {
     private static function execute($payload) {
         $error = self::compatibility_error();
         if ($error) { return new WP_Error('seo_runtime', $error); }
+        if (GNF5_Utils::settings()['seo_analyzer_mode'] === 'remote') return self::execute_remote($payload);
         // Anonymous temporary files avoid pipe deadlocks (including Windows PHP).
         // They are outside the web root and removed automatically when closed.
         $files = array(); $process = null;
@@ -171,6 +191,50 @@ class GNF5_RankMath {
             return $result;
         } catch (Throwable $e) { if (is_resource($process)) @proc_terminate($process); return new WP_Error('seo_analysis', $e->getMessage()); }
         finally { if (is_resource($process)) proc_close($process); foreach ($files as $file) { if (is_resource($file)) fclose($file); } }
+    }
+
+    private static function execute_remote($payload) {
+        $settings = GNF5_Utils::settings();
+        try {
+            // Send data and hashes only. Filesystem paths, executable code and API keys are excluded.
+            $wire = array_intersect_key($payload, array_flip(array('version','values','config','keywordUsage','scriptHashes','fingerprint')));
+            $request_id = bin2hex(random_bytes(16));
+            $body = wp_json_encode(array('protocol'=>1, 'requestId'=>$request_id, 'timestamp'=>time(), 'payload'=>$wire));
+            if (!$body || strlen($body)>2*1024*1024) throw new RuntimeException('Analysis payload is invalid or exceeds 2 MB.');
+            $response = wp_safe_remote_post(rtrim($settings['seo_service_url'], '/').'/v1/analyze', array(
+                'timeout'=>20, 'redirection'=>0, 'sslverify'=>true, 'limit_response_size'=>1024*1024,
+                'headers'=>array('Content-Type'=>'application/json', 'Accept'=>'application/json',
+                    'X-GNF5-Signature'=>hash_hmac('sha256', $body, $settings['seo_service_key'])),
+                'body'=>$body, 'data_format'=>'body',
+            ));
+            if (is_wp_error($response)) throw new RuntimeException('Scoring service could not be reached. It may be starting or unavailable; the article stays Draft for a later scoring retry.');
+            $raw = wp_remote_retrieve_body($response);
+            $signature = (string)wp_remote_retrieve_header($response, 'x-gnf5-signature');
+            if (!hash_equals(hash_hmac('sha256', $raw, $settings['seo_service_key']), $signature)) {
+                throw new RuntimeException('Scoring service response could not be authenticated. Check the service secret and availability.');
+            }
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded) || ($decoded['requestId']??'')!==$request_id) throw new RuntimeException('Scoring service response does not match this request.');
+            if (wp_remote_retrieve_response_code($response)!==200) {
+                $errors = array(
+                    'dependency_mismatch'=>'Scoring service WordPress dependencies differ from this website. Update the service for your WordPress version.',
+                    'busy'=>'Scoring service is busy; article stays Draft for a later scoring retry.',
+                    'timeout'=>'Scoring service timed out; article stays Draft for a later scoring retry.',
+                    'invalid_payload'=>'Scoring service refused incompatible article inputs.',
+                    'analysis_failed'=>'Rank Math analysis failed on the scoring service.',
+                    'expired'=>'Scoring request expired. Check the WordPress server clock.',
+                );
+                throw new RuntimeException($errors[$decoded['error']??''] ?? 'Scoring service refused the request. Check service configuration and logs.');
+            }
+            $result = $decoded['result'] ?? null;
+            if (!is_array($result) || !isset($result['score']) || (!is_int($result['score']) && !is_float($result['score']))
+                || !is_finite((float)$result['score']) || $result['score']<0 || $result['score']>100
+                || ($result['engine']??'')!==self::ENGINE || ($result['version']??'')!==self::VERSION
+                || ($result['fingerprint']??'')!==$payload['fingerprint'] || !is_array($result['tests']??null)) {
+                throw new RuntimeException('Scoring service returned an invalid or mismatched analysis.');
+            }
+            return $result;
+        } catch (Throwable $e) { return new WP_Error('seo_remote', $e->getMessage()); }
     }
 
     public static function fresh($post_id) {

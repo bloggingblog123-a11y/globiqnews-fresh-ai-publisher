@@ -13,6 +13,10 @@ class GNF5_Utils {
             'post_status' => 'draft', // legacy compatibility
             'auto_publish_enabled' => 0,
             'auto_publish_recovered' => 1,
+            'seo_analyzer_mode' => 'local',
+            'seo_service_url' => '',
+            'seo_service_key' => '',
+            'seo_service_consent' => 0,
             'validated_success_status' => 'draft',
             'image_enabled' => 1,
             'image_provider' => 'openai',
@@ -79,6 +83,12 @@ class GNF5_Utils {
         $input = is_array($input) ? $input : array();
         $d = self::defaults();
         $out = array();
+        $previous = self::settings();
+        $out['seo_analyzer_mode'] = in_array(($input['seo_analyzer_mode'] ?? $previous['seo_analyzer_mode']), array('local','remote'), true) ? ($input['seo_analyzer_mode'] ?? $previous['seo_analyzer_mode']) : 'local';
+        $out['seo_service_url'] = esc_url_raw(trim($input['seo_service_url'] ?? $previous['seo_service_url']), array('https'));
+        $out['seo_service_key'] = !empty($input['seo_service_key']) ? sanitize_text_field(trim($input['seo_service_key'])) : $previous['seo_service_key'];
+        if (!empty($input['seo_service_clear_key'])) $out['seo_service_key'] = '';
+        $out['seo_service_consent'] = array_key_exists('seo_service_consent', $input) ? (empty($input['seo_service_consent']) ? 0 : 1) : $previous['seo_service_consent'];
         $out['gemini_api_key'] = sanitize_text_field($input['gemini_api_key'] ?? '');
         $out['gemini_model'] = sanitize_text_field($input['gemini_model'] ?? $d['gemini_model']);
         $out['gemini_backup_model'] = sanitize_text_field($input['gemini_backup_model'] ?? '');
@@ -282,7 +292,7 @@ class GNF5_Utils {
 
     public static function word_count($html) {
         $text = html_entity_decode(wp_strip_all_tags((string)$html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        if (preg_match_all('/\b[\p{L}\p{N}][\p{L}\p{N}\'â€™\-]*\b/u', $text, $m)) {
+        if (preg_match_all('/\b[\p{L}\p{N}][\p{L}\p{N}\'’\-]*\b/u', $text, $m)) {
             return count($m[0]);
         }
         return str_word_count($text);

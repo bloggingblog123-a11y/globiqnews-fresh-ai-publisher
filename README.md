@@ -4,11 +4,11 @@ WordPress article publisher with Rank Math 80+ auto-publishing and GitHub plugin
 
 ## Install once
 
-Upload the **installable plugin ZIP** through WordPress **Plugins â†’ Add New â†’ Upload Plugin**.
+Upload the **installable plugin ZIP** through WordPress **Plugins → Add New → Upload Plugin**.
 Choose **Replace current with uploaded** if the plugin is already installed.
 The folder and database option names stay the same; existing settings and API keys stay in WordPress.
 
-On **Plugins â†’ Installed Plugins**, find this plugin and select **Enable auto-updates**.
+On **Plugins → Installed Plugins**, find this plugin and select **Enable auto-updates**.
 You can also use **Check for updates** and **Update now**. WordPress performs automatic
 updates on its own schedule; publishing a release does not cause an instant update.
 
@@ -19,7 +19,7 @@ releases, prereleases and releases without that ZIP are not installed.
 ## Publish the first GitHub release
 
 1. Put these repository files on the `main` branch.
-2. Open **Actions â†’ Publish plugin update â†’ Run workflow â†’ Run workflow**.
+2. Open **Actions → Publish plugin update → Run workflow → Run workflow**.
 3. Wait for the workflow to finish. **Releases** will contain `v5.29.0` and the installable ZIP.
 
 The included workflow uses GitHub's repository-scoped token. No personal access token
@@ -46,45 +46,43 @@ plus `dist/SHA256SUMS.txt`. Build/workflow files are excluded from the installab
 
 ## Article auto-publishing
 
-Version 5.30.0 executes the installed Rank Math Free **1.0.278** analyzer using a
-local Node.js process. It does not implement substitute scores or call the
-save-only `updateSeoScore` endpoint to invent a result. The WordPress dependencies
-and analyzer are loaded from the installation. The analyzer version and SHA-256
-are checked before use.
+Version 5.31.0 uses Rank Math Free **1.0.278**'s actual analyzer. Choose either a local
+Node.js process or your authenticated HTTPS scoring service. Shared hosting such as
+MilesWeb Premium can use HTTPS mode without Node.js or PHP proc_open on WordPress.
+No alternative scoring rules or invented score numbers are used.
 
-Final article data is committed before analysis. The actual result is saved to
-`rank_math_seo_score`, read back, and bound to a fingerprint of the inputs and
-engine. Only the central publish gate may publish, with Auto Publish enabled and
-a fresh numeric score **>=80**. Failed, missing, noindex, invalid or stale scores
-stay Draft. Scoring retries at most 3 times; an unchanged generated article may
-use the existing writer for one SEO repair before re-analysis. Metadata customized
-by a user is preserved. Runtime failure does not regenerate the article.
+Final article data is committed before analysis. The real result is saved to
+`rank_math_seo_score`, read back and bound to the final inputs and engine. With Auto
+Publish enabled, only a fresh valid score **>=80** passes the central publishing
+gate. Missing, invalid, stale, noindex, failed or lower scores stay Draft. Scoring
+retries at most three times. One bounded SEO repair uses the existing writer and
+reuses images; customized Rank Math metadata is preserved. Scoring failures do not
+regenerate articles.
 
-### Hosting setup
+### Shared-hosting setup
 
-Ask MilesWeb support: “Does my account allow Node.js 18 or newer to run from PHP
-proc_open? Please provide the absolute Node executable path.” The provider name
-alone does not confirm that the account supports this runtime.
+Follow [scoring-service setup](scoring-service/README.md). Select HTTPS mode, enter
+the address and shared secret, enable article-sharing permission, then save settings.
+The supplied service has been verified with WordPress **7.1** analysis dependencies.
+Different dependency hashes are refused; verify the website's version before use.
+Free Render instances have startup delays and usage limits. Failed requests leave
+Draft and retry; this is a testing option, not guaranteed production availability.
 
-Common system, CloudLinux and cPanel Node paths are detected automatically. For
-another path add `define('GNF5_NODE_BINARY', '/absolute/path/to/node');` to
-wp-config.php. Use the actual path supplied by your host. Check the plugin's
-Analyzer compatibility message and use **Analyze & Publish 80+ Drafts Now**.
-Keep WP-Cron working; delayed tasks depend on traffic or a host cron service.
+### Local Node.js setup
 
-Validated with the default Free 1.0.278 engine, WordPress 7.1 and PHP 8.4.25.
-Rank Math PRO and other analyzer versions are refused until verified. Arbitrary
-third-party JavaScript scoring filters and page-builder-specific editor content
-are outside the tested compatibility scope. The supported workflow is the
-plugin's standard post/Gutenberg output. Do not enable this release for such
-customizations without a comparison against the actual editor.
+Local mode needs Node.js 18+, PHP proc_open and temporary storage. Common system,
+CloudLinux and cPanel Node paths are detected. Another supported path can be set
+using `define('GNF5_NODE_BINARY', '/absolute/path/to/node');` in wp-config.php.
+MilesWeb Premium blocks this mode; use HTTPS mode for that plan.
 
 ### Verification
 
-See `TEST-REPORT-5.30.0.md`. Genuine 79/80/81 boundary tests and stale-score tests
-run against actual WordPress and the installed Rank Math engine. The real editor
-and Posts list both showed 80/100 for the same background-scored fixture.
-Live MilesWeb runtime verification is still required before production rollout.
+See [5.31.0 test report](TEST-REPORT-5.31.0.md). Genuine boundary, stale-score,
+repair, HTTP authentication and failure tests use the real analyzer. The prior
+local test also compared the actual Gutenberg editor and Posts list at 80/100.
+Rank Math PRO and custom JavaScript scoring filters remain outside the verified
+scope. Live Render and MilesWeb testing is still required before a stable rollout.
+Keep WP-Cron working; delayed jobs depend on traffic or a host cron service.
 
 ## Third-party updater
 
