@@ -2,12 +2,13 @@
 
 This optional service runs Rank Math Free 1.0.278's actual JavaScript analyzer for
 WordPress hosts that cannot run Node.js. WordPress keeps the article queue, retry
-state and publishing decisions. Only a genuine, fresh score of 80+ may publish.
+state and manual publishing. Version 6 always keeps articles as Draft, regardless of score.
+This service is optional: without it, create Drafts and use Rank Math in the editor.
 
 ## Render setup
 
 Create a **Web Service** from this repository. For staging, select the existing
-draft PR branch `fix/rankmath-background-score-5.30.0`, which now contains 5.31.0.
+draft PR branch `fix/rankmath-background-score-5.30.0`, which now contains 6.0.0.
 
 | Field | Value |
 | --- | --- |
@@ -28,10 +29,10 @@ from Render's Environment page into the WordPress plugin. No Gemini or WordPress
 credentials belong in Render. No database, disk or paid resource is needed.
 
 After deployment, `https://YOUR-SERVICE.onrender.com/health` should show `status: ok`.
-Install the 5.31.0 candidate ZIP using **Replace current with uploaded**. In plugin
+Install the 6.0.0 candidate ZIP using **Replace current with uploaded**. In plugin
 settings choose **My HTTPS scoring service**, enter the base HTTPS address (without
 `/health`), enter the matching secret, tick article-sharing permission, and save.
-Use **Analyze & Publish 80+ Drafts Now** for a controlled draft test.
+Use **Recheck Draft SEO Scores** for a controlled draft test.
 
 Render Free sleeps after 15 minutes idle and can take about a minute to start.
 WordPress waits at most 20 seconds and then keeps Draft, retrying after about 5 and

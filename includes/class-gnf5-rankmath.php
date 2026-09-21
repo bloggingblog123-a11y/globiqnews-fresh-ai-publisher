@@ -273,6 +273,7 @@ class GNF5_RankMath {
         $post_id = absint($post_id);
         if (!$post_id || isset(self::$running[$post_id]) || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id) || get_post_status($post_id)!=='draft' || get_post_meta($post_id,'_gnf5_generated_by',true)!=='fresh-v5' || get_post_meta($post_id,'_gnf5_auto_published',true)) return false;
         if (!in_array(get_post_meta($post_id,'_gnf5_state',true), array('awaiting_rankmath','complete','validation_failed'), true)) return false;
+        if (empty(GNF5_Utils::settings()['rankmath_enabled'])) { update_post_meta($post_id,'_gnf5_seo_status','NOT CHECKED — integration disabled'); return false; }
         $cats=wp_get_post_categories($post_id); $cat_id=(int)($cats[0]??0);
         $owned = GNF5_Utils::owns_lock($cat_id);
         if (!$owned && !GNF5_Utils::acquire_lock($cat_id)) { self::schedule($post_id,90); return false; }
@@ -281,15 +282,16 @@ class GNF5_RankMath {
           if(get_post_meta($post_id,'_gnf5_state',true)==='validation_failed')update_post_meta($post_id,'_gnf5_publish_is_recovery',1);
           GNF5_Utils::set_state($post_id,'awaiting_rankmath');
           GNF5_Utils::clear_recovery_state($post_id);
-          for($round=0;$round<2;$round++) {
+          for($round=0;$round<4;$round++) {
             // Draft slugs are not made unique by WordPress until publication.
             // Commit its proposed final slug before hashing and analyzing it.
             if(!function_exists('get_sample_permalink'))require_once ABSPATH.'wp-admin/includes/post.php';
             $sample=get_sample_permalink($post_id);
-            if(!empty($sample[1]) && $sample[1]!==get_post_field('post_name',$post_id)){
+            if(GNF5_Publish::can_rewrite($post_id) && !empty($sample[1]) && $sample[1]!==get_post_field('post_name',$post_id)){
                 $repair_owned=get_post_meta($post_id,'_gnf5_seo_repair_source',true)===GNF5_Publish::fingerprint($post_id);
-                $saved=wp_update_post(array('ID'=>$post_id,'post_name'=>$sample[1]),true);
+                $saved=GNF5_Publish::save(array('ID'=>$post_id,'post_name'=>$sample[1]));
                 if(is_wp_error($saved))throw new RuntimeException($saved->get_error_message());
+                GNF5_Publish::checkpoint($post_id);
                 if($repair_owned)update_post_meta($post_id,'_gnf5_seo_repair_source',GNF5_Publish::fingerprint($post_id));
             }
             if (!self::fresh($post_id)) {
@@ -316,21 +318,17 @@ class GNF5_RankMath {
             if (GNF5_Publish::score($post_id)!==(float)$result['score']) { throw new RuntimeException('Rank Math score could not be read back from WordPress metadata.'); }
             update_post_meta($post_id,'_gnf5_seo_receipt',array('score'=>$result['score'],'fingerprint'=>$payload['fingerprint'],'engine'=>self::ENGINE,'version'=>self::VERSION,'time'=>time()));
             update_post_meta($post_id,'_gnf5_seo_tests',$result['tests']);
-            update_post_meta($post_id,'_gnf5_seo_status',$result['score']>=80?'PASS':'FAIL');
+            update_post_meta($post_id,'_gnf5_seo_status',$result['score']>=80?'TARGET MET':'BELOW TARGET');
             delete_post_meta($post_id,'_gnf5_seo_error');
             delete_post_meta($post_id,'_gnf5_seo_next');
             wp_clear_scheduled_hook(self::HOOK,array($post_id));
             }
             $score=GNF5_Publish::score($post_id);
-            if($score!==null && $score<80 && $round===0 && GNF5_Runner::repair_scored_post($post_id))continue;
-            $published=GNF5_Publish::maybe_publish($post_id);
-            $recovered=(bool)get_post_meta($post_id,'_gnf5_publish_is_recovery',true);
-            if(!$published && $score!==null && $score>=80 && self::fresh($post_id)
-                && GNF5_Utils::desired_success_status($recovered)==='pending') {
-                wp_update_post(array('ID'=>$post_id,'post_status'=>'pending'));
-            }
-            self::log($post_id,$published?'AUTO PUBLISHED':strtoupper(get_post_status($post_id)),$score!==null && $score>=80?get_post_meta($post_id,'_gnf5_publish_wait_reason',true):'Score below 80.');
-            return $published;
+            if($score!==null && $score<80 && $round<3 && GNF5_Runner::repair_scored_post($post_id))continue;
+            GNF5_Publish::maybe_publish($post_id);
+            GNF5_Utils::set_state($post_id,'complete','Draft ready for human review. Rank Math score: '.($score===null?'N/A':$score.'/100').'.');
+            self::log($post_id,'DRAFT',$score!==null && $score>=80?'Preferred SEO target reached; manual publishing required.':'Below preferred SEO target; manual review required.');
+            return false;
           }
         } catch (Throwable $e) {
             self::$writing_score=false;
@@ -347,6 +345,6 @@ class GNF5_RankMath {
     public static function log($post_id,$decision,$reason='') {
         $cats=wp_get_post_categories($post_id); $cat_id=(int)($cats[0]??0); $category=get_category($cat_id);
         $score=GNF5_Publish::score($post_id);
-        GNF5_Utils::log(($category&&!is_wp_error($category)?$category->name:'Uncategorized').' | Post '.$post_id.' | '.get_the_title($post_id).' | Focus keyword: '.get_post_meta($post_id,'rank_math_focus_keyword',true).' | Rank Math Score: '.($score===null?'N/A':$score.'/100').' | SEO Status: '.get_post_meta($post_id,'_gnf5_seo_status',true).' | Decision: '.$decision.' | Attempts: '.(int)get_post_meta($post_id,'_gnf5_seo_attempts',true).' | Reason: '.$reason,$decision==='AUTO PUBLISHED'?'success':'info',$cat_id);
+        GNF5_Utils::log(($category&&!is_wp_error($category)?$category->name:'Uncategorized').' | Post '.$post_id.' | '.get_the_title($post_id).' | Focus keyword: '.get_post_meta($post_id,'rank_math_focus_keyword',true).' | Rank Math Score: '.($score===null?'N/A':$score.'/100').' | SEO Status: '.get_post_meta($post_id,'_gnf5_seo_status',true).' | Decision: '.$decision.' | Attempts: '.(int)get_post_meta($post_id,'_gnf5_seo_attempts',true).' | Reason: '.$reason,'info',$cat_id);
     }
 }

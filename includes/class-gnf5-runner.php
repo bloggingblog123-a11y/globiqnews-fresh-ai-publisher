@@ -3,8 +3,9 @@ if (!defined('ABSPATH')) { exit; }
 
 class GNF5_Runner {
     private static $bulk_lock_token='';
+    private static $run_id='';
     private static function update_post_checked($args,$context='post update') {
-        $result=wp_update_post($args,true);
+        $result=GNF5_Publish::save($args);
         if(is_wp_error($result))return new WP_Error('post_update',$context.' failed: '.$result->get_error_message());
         if(!$result)return new WP_Error('post_update',$context.' failed: WordPress returned no post ID.');
         return absint($result);
@@ -21,7 +22,7 @@ class GNF5_Runner {
         // continuation events from the previous target are still working.
         $target=max(1,absint($cs['post_limit']));
         if(!GNF5_Utils::start_cron_chain($cat_id,$target)){
-            GNF5_Utils::log('CRON START SKIPPED â€” previous automatic target chain is still active for this category.','info',$cat_id);
+            GNF5_Utils::log('CRON START SKIPPED — previous automatic target chain is still active for this category.','info',$cat_id);
             return;
         }
         self::cron_continue_category($cat_id,$target,1,0);
@@ -45,14 +46,14 @@ class GNF5_Runner {
                 GNF5_Utils::touch_cron_chain($cat_id,$remaining);
                 $ok=wp_schedule_single_event(time()+90,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$pass,$zero_streak));
                 if($ok){
-                    GNF5_Utils::log('CRON CHUNK DEFERRED â€” category lock busy; retrying in about 90 seconds.','warning',$cat_id);
+                    GNF5_Utils::log('CRON CHUNK DEFERRED — category lock busy; retrying in about 90 seconds.','warning',$cat_id);
                 }else{
                     GNF5_Utils::end_cron_chain($cat_id);
-                    GNF5_Utils::log('CRON CHUNK STOPPED â€” could not schedule deferred continuation.','error',$cat_id);
+                    GNF5_Utils::log('CRON CHUNK STOPPED — could not schedule deferred continuation.','error',$cat_id);
                 }
             }else{
                 GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON CHUNK FAILED â€” '.$result->get_error_message(),'warning',$cat_id);
+                GNF5_Utils::log('CRON CHUNK FAILED — '.$result->get_error_message(),'warning',$cat_id);
             }
             return;
         }
@@ -65,17 +66,17 @@ class GNF5_Runner {
             GNF5_Utils::touch_cron_chain($cat_id,$remaining);
             $ok=wp_schedule_single_event(time()+75,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$next_pass,$zero_streak));
             if($ok){
-                GNF5_Utils::log('CRON CHUNK CONTINUE â€” '.$remaining.' target post(s) still remaining; next chunk scheduled.','info',$cat_id);
+                GNF5_Utils::log('CRON CHUNK CONTINUE — '.$remaining.' target post(s) still remaining; next chunk scheduled.','info',$cat_id);
             }else{
                 GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON TARGET STOPPED â€” continuation event could not be scheduled.','error',$cat_id);
+                GNF5_Utils::log('CRON TARGET STOPPED — continuation event could not be scheduled.','error',$cat_id);
             }
         }elseif($remaining>0){
             GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET STOPPED â€” no usable new candidate found after repeated chunk attempts; '.$remaining.' target post(s) remain unfilled.','warning',$cat_id);
+            GNF5_Utils::log('CRON TARGET STOPPED — no usable new candidate found after repeated chunk attempts; '.$remaining.' target post(s) remain unfilled.','warning',$cat_id);
         }else{
             GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET COMPLETE â€” automatic category target reached.','success',$cat_id);
+            GNF5_Utils::log('CRON TARGET COMPLETE — automatic category target reached.','success',$cat_id);
         }
     }
 
@@ -87,7 +88,7 @@ class GNF5_Runner {
         $posts=GNF5_Utils::auto_recoverable_posts(2);
         if(!$posts)return;
 
-        GNF5_Utils::log('AUTO RECOVERY START â€” '.count($posts).' failed draft(s) due for retry.','info',0);
+        GNF5_Utils::log('AUTO RECOVERY START — '.count($posts).' failed draft(s) due for retry.','info',0);
 
         foreach($posts as $post){
             $post_id=absint($post->ID);
@@ -99,15 +100,18 @@ class GNF5_Runner {
             // A busy category lock is not a real recovery attempt. Defer without consuming one.
             if(is_wp_error($result) && $result->get_error_code()==='locked'){
                 update_post_meta($post_id,'_gnf5_recovery_next',time()+(5*MINUTE_IN_SECONDS));
-                GNF5_Utils::log('AUTO RECOVERY DEFERRED â€” post #'.$post_id.' category is busy; retrying in about 5 minutes without consuming an attempt.','info',0);
+                GNF5_Utils::log('AUTO RECOVERY DEFERRED — post #'.$post_id.' category is busy; retrying in about 5 minutes without consuming an attempt.','info',0);
                 continue;
             }
 
+            if(is_wp_error($result) && in_array($result->get_error_code(),array('manual_edit','research_missing'),true)){
+                GNF5_Utils::set_state($post_id,'manual_review',$result->get_error_message());GNF5_Utils::clear_recovery_state($post_id);continue;
+            }
             update_post_meta($post_id,'_gnf5_recovery_attempts',$attempt);
 
             if(!is_wp_error($result) && !empty($result['validated'])){
                 GNF5_Utils::clear_recovery_state($post_id);
-                GNF5_Utils::log('AUTO RECOVERY SUCCESS â€” post #'.$post_id.' recovered on attempt '.$attempt.'.','success',0);
+                GNF5_Utils::log('AUTO RECOVERY SUCCESS — post #'.$post_id.' recovered on attempt '.$attempt.'.','success',0);
                 continue;
             }
 
@@ -118,31 +122,33 @@ class GNF5_Runner {
             if($attempt >= $max){
                 update_post_meta($post_id,'_gnf5_recovery_exhausted',1);
                 delete_post_meta($post_id,'_gnf5_recovery_next');
-                GNF5_Utils::log('AUTO RECOVERY EXHAUSTED â€” post #'.$post_id.' failed after '.$attempt.' automatic attempts. Manual attention is now shown. '.$message,'warning',0);
+                GNF5_Utils::log('AUTO RECOVERY EXHAUSTED — post #'.$post_id.' failed after '.$attempt.' automatic attempts. Manual attention is now shown. '.$message,'warning',0);
             }else{
                 $delay=GNF5_Utils::recovery_delay_for_attempt($attempt+1);
                 update_post_meta($post_id,'_gnf5_recovery_next',time()+$delay);
-                GNF5_Utils::log('AUTO RECOVERY RETRY SCHEDULED â€” post #'.$post_id.' attempt '.$attempt.' failed; next retry in '.human_time_diff(time(),time()+$delay).'. '.$message,'warning',0);
+                GNF5_Utils::log('AUTO RECOVERY RETRY SCHEDULED — post #'.$post_id.' attempt '.$attempt.' failed; next retry in '.human_time_diff(time(),time()+$delay).'. '.$message,'warning',0);
             }
         }
     }
 
 
-    public static function run_category($cat_id,$trigger='manual',$override_limit=null,$scan_multiplier=1) {
+    public static function run_category($cat_id,$trigger='manual',$override_limit=null,$scan_multiplier=1,$run_id='') {
         $cat_id=absint($cat_id);
         $cat=get_category($cat_id);
         if(!$cat || is_wp_error($cat))return new WP_Error('category','WordPress category not found.');
         $settings=GNF5_Utils::settings();
         $cs=GNF5_Utils::category_settings($cat_id,$settings);
 
+        if (!GNF5_Utils::valid_author_id($cs['author_id'])) return new WP_Error('author', $cat->name.': select an author before running this category.');
         if(!GNF5_Utils::acquire_lock($cat_id)){
             return new WP_Error('locked','Another article is processing. Categories and SEO analysis run one at a time; retry shortly.');
         }
+        GNF5_Sources::reset_budget();
         if(function_exists('set_time_limit'))@set_time_limit(300);
 
         $run_limit=$override_limit===null?absint($cs['post_limit']):min(absint($cs['post_limit']),max(1,absint($override_limit)));
         $scan_multiplier=min(4,max(1,absint($scan_multiplier)));
-        GNF5_Utils::log('CATEGORY START â€” '.$cat->name.' ('.$trigger.'). Target: '.$run_limit.' post(s).','info',$cat_id);
+        GNF5_Utils::log('CATEGORY START — '.$cat->name.' ('.$trigger.'). Target: '.$run_limit.' post(s).','info',$cat_id);
 
         $created=0;$published=0;$drafts=0;$attempted=0;$duplicates=0;$failed_before_create=0;$validation_drafts=0;
         $rss_candidates=0;$source_candidates=0;$rss_failures=0;$source_failures=0;
@@ -151,9 +157,9 @@ class GNF5_Runner {
         $source_urls=GNF5_Utils::urls_from_lines($cs['urls']);
         $seen_candidates=array();
 
-        if(!$rss_urls && !$source_urls){
-            $message=$cat->name.': no saved RSS Feed or Source URL is configured. Save this category first, then run it.';
-            GNF5_Utils::log('CATEGORY STOP â€” '.$message,'warning',$cat_id);
+        if(!$rss_urls && !$source_urls && empty($cs['gdelt_enabled'])){
+            $message=$cat->name.': no automatic discovery method (GDELT, RSS or Source URL) is configured. Save this category first, then run it.';
+            GNF5_Utils::log('CATEGORY STOP — '.$message,'warning',$cat_id);
             GNF5_Utils::release_lock($cat_id);
             return array(
                 'created'=>0,'published'=>0,'drafts'=>0,'validation_drafts'=>0,'duplicates'=>0,
@@ -164,28 +170,40 @@ class GNF5_Runner {
         }
 
         try {
+            $batch=self::begin_run($cat_id,$run_id,$cs['post_limit']);
+            if(is_wp_error($batch))return $batch;
+            self::$run_id=$batch['id'];
+            $remaining=max(0,$batch['target']-self::run_count($batch['id']));
+            $run_limit=min($run_limit,$remaining);
+            if(!$run_limit)return array('created'=>0,'published'=>0,'drafts'=>0,'target'=>$batch['target'],'done'=>true,'message'=>$cat->name.': draft target already reached.');
+
             $base_scan=GNF5_Utils::adaptive_scan_limit($cs['post_limit']);
             $passes=$override_limit===null?array(1,2,3):array($scan_multiplier);
 
             foreach($passes as $pass_no){
                 if($created>=$run_limit)break;
-                $scan=min(150,max(10,$base_scan*$pass_no));
-                GNF5_Utils::log('SCAN PASS '.$pass_no.' â€” checking up to '.$scan.' candidates per source for '.$cat->name.'.','info',$cat_id);
+                $scan=min((int)$cs['max_candidates'],max(10,$base_scan*$pass_no));
+                GNF5_Utils::log('SCAN PASS '.$pass_no.' — checking up to '.$scan.' candidates per source for '.$cat->name.'.','info',$cat_id);
                 $items=array();
+                if (!empty($cs['gdelt_enabled'])) {
+                    $gdelt=GNF5_Sources::gdelt_items($cat_id);
+                    if(is_wp_error($gdelt)){ $diagnostics['GDELT: '.$gdelt->get_error_message()]=true; GNF5_Utils::log('GDELT unavailable; continuing other discovery methods. '.$gdelt->get_error_message(),'warning',$cat_id); }
+                    else $items=array_merge($items,$gdelt);
+                }
 
                 foreach($rss_urls as $feed_url){
                     GNF5_Utils::touch_lock($cat_id);
                     $rr=GNF5_Sources::rss_items($feed_url,$scan);
                     if(is_wp_error($rr)){
                         $rss_failures++;
-                        $diag='RSS FAIL â€” '.$feed_url.' â€” '.$rr->get_error_message();
+                        $diag='RSS FAIL — '.$feed_url.' — '.$rr->get_error_message();
                         $diagnostics[$diag]=true;
                         GNF5_Utils::log($diag,'warning',$cat_id);
                         continue;
                     }
                     $count=count($rr);
                     $rss_candidates=max($rss_candidates,$count);
-                    GNF5_Utils::log('RSS OK â€” '.$feed_url.' â€” '.$count.' candidate item(s).','info',$cat_id);
+                    GNF5_Utils::log('RSS OK — '.$feed_url.' — '.$count.' candidate item(s).','info',$cat_id);
                     $items=array_merge($items,$rr);
                 }
 
@@ -194,7 +212,7 @@ class GNF5_Runner {
                     $sr=GNF5_Sources::discover_source($source_url,$scan);
                     if(is_wp_error($sr)){
                         $source_failures++;
-                        $diag='SOURCE FAIL/BLOCKED â€” '.$source_url.' â€” '.$sr->get_error_message();
+                        $diag='SOURCE FAIL/BLOCKED — '.$source_url.' — '.$sr->get_error_message();
                         $diagnostics[$diag]=true;
                         GNF5_Utils::log($diag,'warning',$cat_id);
                         continue;
@@ -202,12 +220,12 @@ class GNF5_Runner {
                     $count=count($sr);
                     $source_candidates=max($source_candidates,$count);
                     $methods=array();foreach($sr as $si){if(!empty($si['method']))$methods[$si['method']]=true;}
-                    GNF5_Utils::log('SOURCE OK â€” '.$source_url.' â€” '.$count.' candidate item(s) via '.implode(', ',array_keys($methods)).'.','info',$cat_id);
+                    GNF5_Utils::log('SOURCE OK — '.$source_url.' — '.$count.' candidate item(s) via '.implode(', ',array_keys($methods)).'.','info',$cat_id);
                     $items=array_merge($items,$sr);
                 }
 
-                foreach(self::unique_items($items) as $item){
-                    if($created>=$run_limit)break;
+                foreach(GNF5_Topics::cluster(self::unique_items($items),$cat_id) as $item){
+                    if($created>=$run_limit || $attempted>=(int)$cs['max_candidates'])break;
                     $u=GNF5_Utils::normalize_url($item['url']??'');
                     if(!$u)continue;
                     $seen_key=GNF5_Utils::source_identity_url($u)?:$u;
@@ -216,15 +234,15 @@ class GNF5_Runner {
                     $attempted++;
 
                     $dup=GNF5_Utils::duplicate_post_id($u);
-                    if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE â€” skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
+                    if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE — skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
                     if(!GNF5_Utils::acquire_source_lock($u)){
-                        $duplicates++;GNF5_Utils::log('SOURCE BUSY â€” another category/request is already processing this source; skipped for this run.','info',$cat_id);continue;
+                        $duplicates++;GNF5_Utils::log('SOURCE BUSY — another category/request is already processing this source; skipped for this run.','info',$cat_id);continue;
                     }
 
                     try{
                         // Recheck after the atomic source claim to close the simultaneous-category duplicate race.
                         $dup=GNF5_Utils::duplicate_post_id($u);
-                        if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE â€” skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
+                        if($dup){$duplicates++;GNF5_Utils::log('DUPLICATE — skipped '.$u.' (post #'.$dup.').','info',$cat_id);continue;}
                         $item['url']=$u;
                         $result=self::process_article($item,$cat_id,$cs,$trigger);
                     }finally{
@@ -232,7 +250,8 @@ class GNF5_Runner {
                     }
                     if(is_wp_error($result)){
                         $failed_before_create++;
-                        GNF5_Utils::log('SKIPPED BEFORE POST CREATE â€” '.$u.' â€” '.$result->get_error_message(),'warning',$cat_id);
+                        $diagnostics[$result->get_error_message()]=true;
+                        GNF5_Utils::log('SKIPPED BEFORE POST CREATE — '.$u.' — '.$result->get_error_message(),'warning',$cat_id);
                         continue;
                     }
 
@@ -246,7 +265,7 @@ class GNF5_Runner {
             }
 
             if($created<$run_limit){
-                GNF5_Utils::log('TARGET NOT FULLY REACHED â€” '.$cat->name.' requested '.$run_limit.' but created '.$created.'. No more usable new candidates were available.','warning',$cat_id);
+                GNF5_Utils::log('TARGET NOT FULLY REACHED — '.$cat->name.' requested '.$run_limit.' but created '.$created.'. No more usable new candidates were available.','warning',$cat_id);
             }
 
             $no_candidates=($attempted===0);
@@ -265,7 +284,7 @@ class GNF5_Runner {
 
             $message=$cat->name.': target '.$run_limit.' | created '.$created.' | published '.$published.' | draft/pending '.$drafts.' | duplicates '.$duplicates.' | failed before create '.$failed_before_create.'.'.$reason;
             $log_type=$created>0?'success':'warning';
-            GNF5_Utils::log('CATEGORY END â€” '.$message,$log_type,$cat_id);
+            GNF5_Utils::log('CATEGORY END — '.$message,$log_type,$cat_id);
             return array(
                 'created'=>$created,'published'=>$published,'drafts'=>$drafts,'validation_drafts'=>$validation_drafts,
                 'duplicates'=>$duplicates,'failed_before_create'=>$failed_before_create,'attempted'=>$attempted,'target'=>$run_limit,'message'=>$message,
@@ -274,7 +293,12 @@ class GNF5_Runner {
                 'rss_failures'=>$rss_failures,'source_failures'=>$source_failures,
                 'diagnostics'=>array_keys($diagnostics),'no_candidates'=>$no_candidates?1:0,
             );
+        } catch (Throwable $e) {
+            GNF5_Utils::log('Category processing interrupted: '.GNF5_Utils::redact($e->getMessage()),'failure',$cat_id);
+            return new WP_Error('processing_failed','Processing interrupted. Saved Drafts and checkpoints are retained; see the plugin log.');
         } finally {
+            self::finish_run($cat_id,self::$run_id,$created,$attempted);
+            self::$run_id='';
             GNF5_Utils::release_lock($cat_id);
         }
     }
@@ -294,178 +318,139 @@ class GNF5_Runner {
             if($dup)return new WP_Error('duplicate','This source URL has already been processed as post #'.$dup.'.');
             $cs=GNF5_Utils::category_settings($cat_id);
             return self::process_article(array('url'=>$url,'title'=>'','fallback_text'=>'','method'=>'Manual URL'),$cat_id,$cs,'manual');
+        }catch(Throwable $e){
+            GNF5_Utils::log('Manual research interrupted: '.GNF5_Utils::redact($e->getMessage()),'failure',$cat_id);
+            return new WP_Error('processing_failed','Research interrupted. Existing Drafts and checkpoints are retained; see the plugin log.');
         }finally{GNF5_Utils::release_source_lock($url);GNF5_Utils::release_lock($cat_id);}
     }
 
-    private static function process_article($item,$cat_id,$cs,$trigger='manual') {
-        $url=GNF5_Utils::normalize_url($item['url']??'');
-        if(!$url)return new WP_Error('url','Invalid candidate URL.');
-
-        GNF5_Utils::touch_lock($cat_id);
-        $source=GNF5_Sources::extract_article($url,$item['fallback_text']??'');
-        if(is_wp_error($source))return $source;
-        $resolved_url=GNF5_Utils::normalize_url($source['url']??'')?:$url;
-        if(GNF5_Utils::source_identity_url($resolved_url)!==GNF5_Utils::source_identity_url($url)){
-            $resolved_dup=GNF5_Utils::duplicate_post_id($resolved_url);
-            if($resolved_dup)return new WP_Error('duplicate_resolved','Resolved source URL has already been processed as post #'.$resolved_dup.'.');
-            $url=$resolved_url;
-        }
-        $source_words=GNF5_Utils::word_count($source['text']);
-        GNF5_Utils::log('EXTRACTED â€” '.$source_words.' source words via '.$source['method'].' â€” '.$url,'info',$cat_id);
-        if($source_words<80)return new WP_Error('thin_source','Insufficient source facts (under 80 words).');
-
-        $article=GNF5_Writer::create_article($source,$cat_id);
-        if(is_wp_error($article))return $article;
-
-        $article=GNF5_SEO::normalize_metadata($article);
-        $content=GNF5_SEO::build_gutenberg_content($article['content_html']);
+    private static function process_article($item,$cat_id,$cs,$trigger) {
         $author=GNF5_Utils::valid_author_id($cs['author_id']??0);
-        if(!$author)return new WP_Error('author','No valid WordPress author with edit_posts permission is available for this category.');
-
-        // Reliability rule: create a WordPress Draft as soon as the article text exists.
-        $post_id=wp_insert_post(array(
-            'post_type'=>'post','post_status'=>'draft','post_author'=>$author,
-            'post_title'=>$article['title'],'post_name'=>$article['slug'],'post_excerpt'=>$article['excerpt'],
-            'post_content'=>$content,'post_category'=>array(absint($cat_id)),'tags_input'=>$article['tags'],
-        ),true);
-        if(is_wp_error($post_id))return $post_id;
-
-        update_post_meta($post_id,'_gnf5_source_url',$url);
-        update_post_meta($post_id,'_gnf5_source_identity',GNF5_Utils::source_identity_url($url));
-        update_post_meta($post_id,'_gnf5_source_method',sanitize_text_field($source['method']));
-        update_post_meta($post_id,'_gnf5_generated_by','fresh-v5');
-        update_post_meta($post_id,'_gnf5_schema_recommendation','NewsArticle');
-        update_post_meta($post_id,'_gnf5_article_data',$article);
-        update_post_meta($post_id,'_gnf5_source_facts',GNF5_Utils::safe_substr(wp_strip_all_tags($source['text']),0,24000));
-        GNF5_Utils::set_state($post_id,'draft_created','Article text saved; continuing post-processing.');
-        GNF5_SEO::save_rank_math($post_id,$article);
-
-        return self::finalize_post($post_id,$article,$source['text'],$cat_id,$cs,false);
+        if(!$author)return new WP_Error('author',get_cat_name($cat_id).': an author must be selected.');
+        $url=GNF5_Utils::normalize_url($item['url']??'');
+                $job_key='gnf5_research_job_'.md5($cat_id.'|'.$url.'|'.wp_json_encode($cs));
+        $research=get_transient($job_key);
+        if(!is_array($research) || empty($research['facts']))$research=GNF5_Research::gather($item,$cat_id);
+        if(!is_wp_error($research))set_transient($job_key,$research,6*HOUR_IN_SECONDS);
+        if(is_wp_error($research))return $research;
+        if(GNF5_Topics::duplicate($research))return new WP_Error('topic_duplicate','This event is already covered by a queued or saved article.');
+        $opportunity=GNF5_Topics::opportunity($item,$research,$cat_id);
+        if(($item['method']??'')==='GDELT' && ($research['independent_source_estimate']<(int)$cs['min_sources'] || $opportunity['score']<(int)$cs['opportunity_threshold'])){
+            GNF5_Topics::remember($research,$cat_id,'failed',0,'Below GDELT source/opportunity threshold.');
+            return new WP_Error('topic_low_opportunity','GDELT topic below configured source/opportunity threshold; no Draft created.');
+        }
+        GNF5_Topics::remember($research,$cat_id,'processing');
+        $article=GNF5_Writer::create_article($research,$cat_id);
+        if(is_wp_error($article)){GNF5_Topics::remember($research,$cat_id,'failed',0,$article->get_error_message());return $article;}
+        if(!GNF5_SEO::title_is_unique($article['title'],0,$article['focus_keyword'])){
+            GNF5_Topics::remember($research,$cat_id,'failed',0,'Duplicate/similar existing title.');
+            return new WP_Error('duplicate_title','Generated title duplicates an existing article; no duplicate Draft created.');
+        }
+        if(self::$run_id!==''){
+            $run=get_option('gnf5_run_cat_'.$cat_id,array());
+            if(($run['id']??'')!==self::$run_id || self::run_count(self::$run_id)>=(int)$run['target'])return new WP_Error('run_limit','Draft limit reached.');
+            $run['reservation']=array('url'=>$url,'time'=>time());update_option('gnf5_run_cat_'.$cat_id,$run,false);
+        }
+        // Save a usable, checked body atomically with recovery metadata; never create an empty placeholder.
+        $post_id=GNF5_Publish::save(array('post_type'=>'post','post_author'=>$author,'post_title'=>$article['title'],
+            'post_name'=>$article['slug'],'post_excerpt'=>$article['excerpt'],'post_content'=>GNF5_SEO::build_gutenberg_content($article['content_html']),
+            'post_category'=>array($cat_id),'tags_input'=>$article['tags'],
+            'meta_input'=>array('_gnf5_generated_by'=>'fresh-v5','_gnf5_source_url'=>$url,'_gnf5_source_identity'=>GNF5_Utils::source_identity_url($url),
+                '_gnf5_source_method'=>sanitize_text_field($item['method']??$trigger),'_gnf5_article_data'=>$article,'_gnf5_run_id'=>self::$run_id,
+                '_gnf5_state'=>'draft_created','_gnf5_state_updated'=>time(),'_gnf5_topic_fingerprint'=>GNF5_Topics::fingerprint($research),
+                '_gnf5_opportunity'=>$opportunity,'_gnf5_schema_recommendation'=>'NewsArticle')),true);
+        if(is_wp_error($post_id)){GNF5_Topics::remember($research,$cat_id,'failed',0,$post_id->get_error_message());return $post_id;}
+        delete_transient($job_key);
+        GNF5_Research::store($post_id,$research);GNF5_Topics::remember($research,$cat_id,'draft',$post_id);
+        GNF5_SEO::save_rank_math($post_id,$article);GNF5_Publish::checkpoint($post_id);
+        GNF5_Utils::set_state($post_id,'draft_created','Original article saved for human review; finalizing optional images and SEO.');
+        GNF5_Quality::store($post_id,$article['quality']);
+        return self::finalize_post($post_id,$article,$research,$cat_id,$cs,false);
     }
 
     private static function compose_content($post_id,$article,$image_ids,$cat_id,$cs,$source_url) {
-        $content=GNF5_SEO::build_gutenberg_content($article['content_html']);
-        if(!empty(GNF5_Utils::settings()['image_enabled']) && count($image_ids)===2){
-            $content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts']);
-        }
-        $related=GNF5_SEO::related_links($post_id,$cat_id,3);
-        $external=GNF5_SEO::external_links_section($cs['external_links']??'',$source_url);
-        return $content.$related.$external;
+        $html=GNF5_SEO::insert_internal_links($article['content_html'],$post_id,$cat_id);
+        $content=GNF5_SEO::build_gutenberg_content($html);
+        if(GNF5_Utils::images_enabled($cat_id))$content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts']);
+        // No automatic source/URL dump. Research is available in the private report.
+        return $content.GNF5_Images::manual_image_markup($post_id);
     }
 
-    private static function finalize_post($post_id,$article,$source_text,$cat_id,$cs,$is_recovery=false) {
+    private static function edit_token($post_id) {
+        $data=array();foreach(array('post_title','post_name','post_content','post_excerpt','post_status','post_author') as $field)$data[$field]=get_post_field($field,$post_id);
+        foreach(array('_thumbnail_id','rank_math_title','rank_math_description','rank_math_focus_keyword') as $key)$data[$key]=get_post_meta($post_id,$key,true);
+        $data['categories']=wp_get_post_categories($post_id);$data['tags']=wp_get_post_tags($post_id,array('fields'=>'ids'));
+        return hash('sha256',serialize($data));
+    }
+
+    private static function finalize_post($post_id,$article,$research,$cat_id,$cs,$is_recovery=false) {
+        if(!GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Human edits detected; background recovery will not overwrite this Draft.');
+        $token=self::edit_token($post_id);$image_error='';
         try {
-            GNF5_Publish::reset($post_id);
-            update_post_meta($post_id,'_gnf5_publish_is_recovery',$is_recovery?1:0);
-            // Processing itself is recovery-queued so a hard timeout/fatal after Draft creation
-            // cannot leave the post permanently stuck in a non-recoverable state.
-            GNF5_Utils::set_state($post_id,'processing','Finalizing article, SEO and images.');
-            $polished=GNF5_Writer::polish_after_checkpoint($article,$source_text,$cat_id);
-            if(!is_wp_error($polished))$article=$polished;
-            else GNF5_Utils::log('Post-checkpoint polish deferred: '.$polished->get_error_message(),'warning',$cat_id);
-            $article=GNF5_SEO::normalize_metadata($article);
-            update_post_meta($post_id,'_gnf5_article_data',$article);
-            GNF5_SEO::save_rank_math($post_id,$article);
-
-            $image_ids=array();
-            if(!empty(GNF5_Utils::settings()['image_enabled'])){
+            GNF5_Utils::set_state($post_id,'processing','Finalizing optional images and SEO; publication remains manual.');
+            $image_ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);
+            if(GNF5_Utils::images_enabled($cat_id)){
                 $images=GNF5_Images::generate_for_post($article,$post_id,$cat_id);
-                if(is_wp_error($images)){
-                    $partial=$images->get_error_data();
-                    GNF5_Utils::set_state($post_id,'image_pending','Image generation incomplete: '.$images->get_error_message());
-                    update_post_meta($post_id,'_gnf5_validation_errors',array('Image generation incomplete: '.$images->get_error_message()));
-                    GNF5_Utils::log('DRAFT #'.$post_id.' â€” image generation incomplete. Successful image(s) are checkpointed; Retry will generate only missing image(s). '.$images->get_error_message(),'error',$cat_id);
-                    return array('post_id'=>$post_id,'status'=>'draft','validated'=>false,'errors'=>array($images->get_error_message()));
-                }
-                $image_ids=$images;
-                set_post_thumbnail($post_id,$image_ids[0]);
+                if(is_wp_error($images)){$image_error=$images->get_error_message();$image_ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);}
+                else $image_ids=$images;
             }
-
-            $source_url=(string)get_post_meta($post_id,'_gnf5_source_url',true);
-            $content=self::compose_content($post_id,$article,$image_ids,$cat_id,$cs,$source_url);
-            $updated=self::update_post_checked(array(
-                'ID'=>$post_id,'post_title'=>$article['title'],'post_name'=>$article['slug'],
-                'post_excerpt'=>$article['excerpt'],'post_content'=>$content,'tags_input'=>$article['tags'],
-            ),'Initial finalized article save');
+            if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed while processing; generated text did not overwrite human edits.');
+            $content=self::compose_content($post_id,$article,$image_ids,$cat_id,$cs,get_post_meta($post_id,'_gnf5_source_url',true));
+            $updated=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'Draft finalization');
             if(is_wp_error($updated))throw new RuntimeException($updated->get_error_message());
+            if(GNF5_Utils::images_enabled($cat_id) && !empty($image_ids[0]) && !get_post_thumbnail_id($post_id))set_post_thumbnail($post_id,$image_ids[0]);
             GNF5_SEO::save_rank_math($post_id,$article);
-
-            // Strict SEO checks are no longer a publishing requirement.
-            // Keep informational metrics and the legacy result shape for queue callers.
-            $check=array('errors'=>array(),'warnings'=>array(),
-                'word_count'=>GNF5_Utils::word_count($article['content_html']),
-                'density'=>GNF5_SEO::keyword_density($article['content_html'],$article['focus_keyword']??''));
-            update_post_meta($post_id,'_gnf5_validation_errors',array());
-            update_post_meta($post_id,'_gnf5_validation_warnings',array());
-            update_post_meta($post_id,'_gnf5_final_word_count',$check['word_count']);
-            update_post_meta($post_id,'_gnf5_keyword_density',$check['density']);
-
-            // Scoring also runs with Auto Publish off. Every failure remains Draft.
-            if(get_post_status($post_id)!=='draft'){
-                $draft=self::update_post_checked(array('ID'=>$post_id,'post_status'=>'draft'),'Score gate draft checkpoint');
-                if(is_wp_error($draft))throw new RuntimeException($draft->get_error_message());
+            update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($article['content_html']));
+            GNF5_Publish::checkpoint($post_id);
+            if($image_error){
+                GNF5_Utils::set_state($post_id,'image_pending','Draft body is ready. Optional image processing: '.$image_error);
+                update_post_meta($post_id,'_gnf5_validation_errors',array($image_error));
+            }else{
+                GNF5_Utils::clear_recovery_state($post_id);
+                GNF5_Publish::wait_for_score($post_id,$is_recovery);
             }
-            update_post_meta($post_id,'_gnf5_seo_repair_source',GNF5_Publish::fingerprint($post_id));
-            GNF5_Publish::wait_for_score($post_id,$is_recovery);
-            $final_status=get_post_status($post_id);
-            return array('post_id'=>$post_id,'status'=>$final_status,'validated'=>true,'awaiting_rankmath'=>$final_status==='draft','errors'=>array(),'warnings'=>$check['warnings']);
-
-        } catch(Throwable $e) {
-            GNF5_Utils::set_state($post_id,'post_processing_failed','Post-processing error: '.$e->getMessage());
-            update_post_meta($post_id,'_gnf5_validation_errors',array('Post-processing error: '.$e->getMessage()));
-            GNF5_Utils::log('DRAFT #'.$post_id.' â€” article remains saved; post-processing failed and can be retried: '.$e->getMessage(),'error',$cat_id);
-            return array('post_id'=>$post_id,'status'=>'draft','validated'=>false,'errors'=>array($e->getMessage()),'warnings'=>array());
+            // Scoring may have committed an independently checked SEO improvement.
+            // Always report the latest saved article, not the pre-optimization body.
+            $latest=get_post_meta($post_id,'_gnf5_article_data',true);
+            if(is_array($latest) && !empty($latest['quality']))$article=$latest;
+            $report=$article['quality']??array('warnings'=>array('Legacy article: quality checks NOT CHECKED.'));
+            if($image_error)$report['warnings'][]=$image_error;
+            $report['diagnostics']=GNF5_SEO::validate($post_id,$article,$image_ids);
+            GNF5_Quality::store($post_id,$report);
+            GNF5_Utils::log('DRAFT #'.$post_id.' saved for human review. Images '.(GNF5_Utils::images_enabled($cat_id)?'ON':'OFF').'; Rank Math '.(GNF5_Publish::score($post_id)??'N/A').'.','draft',$cat_id);
+            return array('post_id'=>$post_id,'status'=>get_post_status($post_id),'validated'=>$image_error==='','errors'=>$image_error?array($image_error):array(),'warnings'=>$report['warnings']??array());
+        }catch(Throwable $e){
+            GNF5_Utils::set_state($post_id,'post_processing_failed','Draft saved; finalization failed: '.GNF5_Utils::redact($e->getMessage()));
+            return array('post_id'=>$post_id,'status'=>get_post_status($post_id),'validated'=>false,'errors'=>array(GNF5_Utils::redact($e->getMessage())));
         }
     }
 
     /** One bounded improvement of an unchanged generated article, using actual failed tests. */
     public static function repair_scored_post($post_id) {
-        $source=GNF5_Publish::fingerprint($post_id);
-        if(get_post_status($post_id)!=='draft' || get_post_meta($post_id,'_gnf5_seo_repair_source',true)!==$source
-            || (int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=1) return false;
-        $article=get_post_meta($post_id,'_gnf5_article_data',true);
-        $facts=get_post_meta($post_id,'_gnf5_source_facts',true);
-        if(!is_array($article) || !$facts || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
-        $owned=(array)get_post_meta($post_id,'_gnf5_rankmath_written',true);
-        foreach(array('rank_math_title','rank_math_description','rank_math_focus_keyword') as $key){
-            if(!isset($owned[$key]) || (string)get_post_meta($post_id,$key,true)!==(string)$owned[$key])return false;
-        }
-        $errors=array('Keep 1000â€“1200 words, the same source facts and focus keyword. Improve only genuine SEO issues; do not keyword-stuff.');
-        foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
-            // Content AI is a separate paid service; the word target remains 1000â€“1200.
-            if(in_array($name,array('hasContentAI','lengthContent'),true))continue;
+        if(!GNF5_Publish::can_rewrite($post_id) || (int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3)return false;
+        $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
+        if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
+        $token=self::edit_token($post_id);$cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
+        $attempt=(int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)+1;update_post_meta($post_id,'_gnf5_seo_repair_attempts',$attempt);
+        $errors=array();foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
+            if(in_array($name,array('hasContentAI','lengthContent','titleHasNumber','titleHasPowerWords','titleSentiment'),true))continue;
             if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
         }
-        $cats=wp_get_post_categories($post_id); $cat_id=(int)($cats[0]??0);
-        update_post_meta($post_id,'_gnf5_seo_repair_attempts',1);
-        GNF5_Utils::touch_lock($cat_id);
-        try{
-            $repaired=GNF5_Writer::repair_for_validation($article,$facts,$errors,$cat_id);
-            if(is_wp_error($repaired))throw new RuntimeException($repaired->get_error_message());
-            if(get_post_status($post_id)!=='draft' || GNF5_Publish::fingerprint($post_id)!==$source)return false;
-            $repaired=GNF5_SEO::normalize_metadata($repaired);
-            if($repaired['focus_keyword']!==$article['focus_keyword'])throw new RuntimeException('SEO repair changed the focus keyword; original article retained.');
-            $words=GNF5_Utils::word_count($repaired['content_html']);
-            if($words<1000 || $words>1200)throw new RuntimeException('SEO repair did not meet the 1000â€“1200 word requirement; original article retained.');
-            $image_ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);
-            $content=self::compose_content($post_id,$repaired,$image_ids,$cat_id,GNF5_Utils::category_settings($cat_id),(string)get_post_meta($post_id,'_gnf5_source_url',true));
-            GNF5_Publish::reset($post_id);
-            $saved=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$repaired['title'],'post_name'=>$repaired['slug'],
-                'post_excerpt'=>$repaired['excerpt'],'post_content'=>$content,'tags_input'=>$repaired['tags']),'SEO improvement');
-            if(is_wp_error($saved))throw new RuntimeException($saved->get_error_message());
-            foreach($image_ids as $index=>$image_id){
-                if(isset($repaired['image_alts'][$index]))update_post_meta($image_id,'_wp_attachment_image_alt',sanitize_text_field($repaired['image_alts'][$index]));
-            }
-            update_post_meta($post_id,'_gnf5_article_data',$repaired);
-            update_post_meta($post_id,'_gnf5_final_word_count',$words);
-            GNF5_SEO::save_rank_math($post_id,$repaired);
-            GNF5_Utils::touch_lock($cat_id);
-            GNF5_Utils::log('SEO improvement saved for #'.$post_id.'; existing images reused. Re-analyzing final article.','info',$cat_id);
-            return true;
-        }catch(Throwable $e){
-            GNF5_Utils::log('SEO improvement stopped for #'.$post_id.': '.$e->getMessage(),'warning',$cat_id);
-            return false;
+        $repaired=GNF5_Writer::repair_for_validation($article,$research,$errors,$cat_id);
+        if(is_wp_error($repaired))return false;
+        $report=GNF5_Quality::evaluate($repaired,$research,true);
+        if(($report['facts']['status']??'')!=='PASS' || in_array($report['originality']['status']??'UNKNOWN',array('FAIL','UNKNOWN'),true)){
+            GNF5_Utils::log('SEO optimization '.$attempt.' rejected: quality evidence insufficient. Original Draft retained.','seo_warning',$cat_id);return false;
         }
+        if(!hash_equals($token,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return false;
+        $ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);
+        $saved=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$repaired['title'],'post_name'=>$repaired['slug'],'post_excerpt'=>$repaired['excerpt'],
+            'post_content'=>self::compose_content($post_id,$repaired,$ids,$cat_id,GNF5_Utils::category_settings($cat_id),''),'tags_input'=>$repaired['tags']),'SEO optimization');
+        if(is_wp_error($saved))return false;
+        $repaired['quality']=$report;update_post_meta($post_id,'_gnf5_article_data',$repaired);
+        update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($repaired['content_html']));
+        GNF5_SEO::save_rank_math($post_id,$repaired);GNF5_Publish::checkpoint($post_id);GNF5_Quality::store($post_id,$report);
+        return true;
     }
 
     private static function bulk_queue_load() {
@@ -488,7 +473,7 @@ class GNF5_Runner {
             $old=get_option(GNF5_BULK_RECOVERY_LOCK,array());
             $fresh=is_array($old)&&!empty($old['time'])&&(time()-absint($old['time'])<30*MINUTE_IN_SECONDS);
             if($fresh)return false;
-            delete_option(GNF5_BULK_RECOVERY_LOCK);
+            GNF5_Utils::delete_lock_value(GNF5_BULK_RECOVERY_LOCK,$old);
             if(!add_option(GNF5_BULK_RECOVERY_LOCK,$state,'','no'))return false;
         }
         self::$bulk_lock_token=$token;
@@ -499,7 +484,7 @@ class GNF5_Runner {
         if(!defined('GNF5_BULK_RECOVERY_LOCK'))return;
         $old=get_option(GNF5_BULK_RECOVERY_LOCK,array());
         if(self::$bulk_lock_token!==''&&is_array($old)&&hash_equals((string)($old['token']??''),self::$bulk_lock_token)){
-            delete_option(GNF5_BULK_RECOVERY_LOCK);
+            GNF5_Utils::delete_lock_value(GNF5_BULK_RECOVERY_LOCK,$old);
         }
         self::$bulk_lock_token='';
     }
@@ -518,6 +503,8 @@ class GNF5_Runner {
         if(!$post_ids)return new WP_Error('bulk_empty','Select at least one failed draft.');
         if(count($post_ids)>200)$post_ids=array_slice($post_ids,0,200);
 
+        if(!self::acquire_bulk_lock())return new WP_Error('locked','Recovery queue is busy; selected drafts were not lost. Retry shortly.');
+        try {
         $q=self::bulk_queue_load();
         $added=0;$already=0;$invalid=0;
         foreach($post_ids as $post_id){
@@ -529,6 +516,7 @@ class GNF5_Runner {
                 $invalid++;continue;
             }
             if(isset($q[$post_id])){$already++;continue;}
+            if(count($q)>=200){$invalid++;continue;}
             $q[$post_id]=array(
                 'post_id'=>$post_id,'state'=>'queued','added'=>time(),'updated'=>time(),
                 'message'=>'Waiting for one-by-one recovery.',
@@ -541,6 +529,7 @@ class GNF5_Runner {
         $status=self::bulk_recovery_status();
         $status['added']=$added;$status['already_queued']=$already;$status['invalid']=$invalid;
         return $status;
+        } finally { self::release_bulk_lock(); }
     }
 
     public static function bulk_recovery_status() {
@@ -565,7 +554,10 @@ class GNF5_Runner {
             $ids[]=$post_id;
         }
 
-        if(count($clean)!==count($q))self::bulk_queue_save($clean);
+        if($clean!==$q){
+            if(self::$bulk_lock_token!=='')self::bulk_queue_save($clean);
+            elseif(self::acquire_bulk_lock()){try{if(self::bulk_queue_load()===$q)self::bulk_queue_save($clean);}finally{self::release_bulk_lock();}}
+        }
         return array(
             'pending'=>count($clean),
             'processing'=>$processing,
@@ -622,7 +614,7 @@ class GNF5_Runner {
             $q[$post_id]['message']='Repairing this draft now. Other selected drafts are waiting.';
             self::bulk_queue_save($q);
 
-            GNF5_Utils::log('BULK RETRY â€” selected draft #'.$post_id.' is being processed one-by-one.','info',0);
+            GNF5_Utils::log('BULK RETRY — selected draft #'.$post_id.' is being processed one-by-one.','info',0);
             $result=self::retry_post($post_id);
 
             $q=self::bulk_queue_load();
@@ -682,31 +674,40 @@ class GNF5_Runner {
 
     public static function retry_post($post_id) {
         $post_id=absint($post_id);
-        if(!$post_id || get_post_type($post_id)!=='post')return new WP_Error('post','Post not found.');
-        if(!in_array(get_post_status($post_id),array('draft','pending'),true))return new WP_Error('post','Recovery only supports draft or pending posts.');
-        if(get_post_meta($post_id,'_gnf5_generated_by',true)!=='fresh-v5')return new WP_Error('post','This is not a GlobiqNews Fresh V5 post.');
-
-        $cats=wp_get_post_categories($post_id);
-        $cat_id=absint($cats[0]??0);
-        if(!$cat_id)return new WP_Error('category','Post category is missing.');
-        if(!GNF5_Utils::acquire_lock($cat_id))return new WP_Error('locked','This category is already importing.');
-
+        if(get_post_type($post_id)!=='post' || get_post_meta($post_id,'_gnf5_generated_by',true)!=='fresh-v5')return new WP_Error('post','Plugin Draft not found.');
+        if(!GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Draft was manually edited or has no safe ownership checkpoint. Use explicit regeneration only after reviewing your edits.');
+        $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
+        if(!GNF5_Utils::acquire_lock($cat_id))return new WP_Error('locked','Another article worker is active.');
         try{
-            $article=get_post_meta($post_id,'_gnf5_article_data',true);
-            if(!is_array($article) || !$article)return new WP_Error('article_data','Stored article recovery data is missing.');
-            $source_text=(string)get_post_meta($post_id,'_gnf5_source_facts',true);
-            if($source_text===''){
-                // If temporary facts were already cleared, try public extraction again only when needed.
-                $source_url=(string)get_post_meta($post_id,'_gnf5_source_url',true);
-                $source=GNF5_Sources::extract_article($source_url,'');
-                if(!is_wp_error($source))$source_text=$source['text'];
-            }
-            $cs=GNF5_Utils::category_settings($cat_id);
-            GNF5_Utils::log('RETRY START â€” post #'.$post_id.'. Existing successful images/state will be reused.','info',$cat_id);
-            return self::finalize_post($post_id,$article,$source_text,$cat_id,$cs,true);
-        }finally{
-            GNF5_Utils::release_lock($cat_id);
-        }
+            $article=get_post_meta($post_id,'_gnf5_article_data',true);$research=GNF5_Research::load($post_id);
+            if(!is_array($article) || is_wp_error($research))return new WP_Error('research_missing','Research recovery checkpoint missing; explicit regeneration is required.');
+            return self::finalize_post($post_id,$article,$research,$cat_id,GNF5_Utils::category_settings($cat_id),true);
+        }finally{GNF5_Utils::release_lock($cat_id);}
+    }
+
+    private static function begin_run($cat_id,$requested,$target) {
+        $key='gnf5_run_cat_'.$cat_id;$old=get_option($key,array());
+        $requested=preg_replace('/[^a-zA-Z0-9_-]/','',substr((string)$requested,0,80));
+        if(!$requested && GNF5_Utils::cron_chain_active($cat_id)){$chain=get_transient(GNF5_Utils::cron_chain_key($cat_id));$requested='cron-'.($chain['id']??$chain['started']);}
+        if(!$requested)$requested=wp_generate_uuid4();
+        if(($old['id']??'')===$requested)return $old;
+        if(in_array(($old['status']??''),array('running','waiting'),true) && ($old['updated']??0)>time()-1800)return new WP_Error('locked','This category already has an active batch.');
+        $run=array('id'=>$requested,'target'=>min(10,max(1,(int)$target)),'started'=>time(),'updated'=>time(),'status'=>'running','created'=>0,'attempted'=>0);
+        update_option($key,$run,false);return $run;
+    }
+
+    public static function run_count($run_id) {
+        if(!$run_id)return 0;
+        $q=new WP_Query(array('post_type'=>'post','post_status'=>array('draft','pending','publish','future','private','trash'),'fields'=>'ids','posts_per_page'=>11,
+            'no_found_rows'=>true,'meta_key'=>'_gnf5_run_id','meta_value'=>$run_id));
+        return count($q->posts);
+    }
+
+    private static function finish_run($cat_id,$id,$created,$attempted) {
+        if(!$id)return;$key='gnf5_run_cat_'.$cat_id;$run=get_option($key,array());if(($run['id']??'')!==$id)return;
+        $run['created']=self::run_count($id);$run['attempted']=(int)($run['attempted']??0)+(int)$attempted;
+        $run['updated']=time();$run['status']=$run['created']>=$run['target']?'complete':($created===0?'exhausted':'waiting');
+        unset($run['reservation']);update_option($key,$run,false);
     }
 
     public static function skip_failed($post_id) {
@@ -730,5 +731,40 @@ class GNF5_Runner {
             $seen[$key]=true;$item['url']=$u;$out[]=$item;
         }
         return $out;
+    }
+    public static function regenerate($post_id) {
+        $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);$cs=GNF5_Utils::category_settings($cat_id);
+        if(!GNF5_Utils::valid_author_id($cs['author_id']))return new WP_Error('author','Select a category author before regeneration.');
+        $token=self::edit_token($post_id);$url=get_post_meta($post_id,'_gnf5_source_url',true);
+        $old=get_post_meta($post_id,'_gnf5_research',true);$support=array();foreach((array)($old['sources']??array()) as $source)$support[]=array('url'=>$source['url'],'method'=>'Saved research reference');
+        $research=GNF5_Research::gather(array('url'=>$url,'supporting_items'=>$support,'method'=>'Explicit regeneration'),$cat_id);
+        if(is_wp_error($research))return $research;
+        $article=GNF5_Writer::create_article($research,$cat_id);if(is_wp_error($article))return $article;
+        if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during regeneration; replacement cancelled.');
+        $manual=GNF5_Images::manual_image_markup($post_id);
+        $result=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$article['title'],'post_name'=>$article['slug'],'post_excerpt'=>$article['excerpt'],
+            'post_content'=>GNF5_SEO::build_gutenberg_content($article['content_html']).$manual,'tags_input'=>$article['tags']),'Explicit regeneration');
+        if(is_wp_error($result))return $result;
+        update_post_meta($post_id,'_gnf5_article_data',$article);delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
+        GNF5_Research::store($post_id,$research);GNF5_Topics::remember($research,$cat_id,'draft',$post_id);
+        GNF5_SEO::save_rank_math($post_id,$article);GNF5_Publish::checkpoint($post_id);
+        return self::finalize_post($post_id,$article,$research,$cat_id,$cs,false);
+    }
+
+    public static function image_action($post_id,$action) {
+        $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);$owned=GNF5_Publish::can_rewrite($post_id);
+        if($action!=='remove_images' && !GNF5_Utils::images_enabled($cat_id))return new WP_Error('images_off','Image generation is OFF.');
+        if(in_array($action,array('remove_images','regenerate_images'),true)){$result=GNF5_Images::remove_generated($post_id);if(is_wp_error($result))return $result;}
+        if($action==='remove_images'){if($owned)GNF5_Publish::checkpoint($post_id);return true;}
+        $token=self::edit_token($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
+        if(!is_array($article))return new WP_Error('article_data','Image prompt data missing.');
+        $ids=GNF5_Images::generate_for_post($article,$post_id,$cat_id,true);if(is_wp_error($ids))return $ids;
+        if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during image generation; image insertion cancelled.');
+        $content=get_post_field('post_content',$post_id);
+        if(!GNF5_Images::has_manual_inline($post_id))$content=GNF5_Images::insert_two_blocks($content,$ids,$article['image_alts']);
+        $result=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'Explicit image insertion');if(is_wp_error($result))return $result;
+        if(!get_post_thumbnail_id($post_id) && !empty($ids[0]))set_post_thumbnail($post_id,$ids[0]);
+        if($owned)GNF5_Publish::checkpoint($post_id);
+        return true;
     }
 }

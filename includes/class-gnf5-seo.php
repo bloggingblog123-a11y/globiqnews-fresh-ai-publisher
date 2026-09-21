@@ -31,7 +31,7 @@ class GNF5_SEO {
         return (float)$pct;
     }
 
-    public static function title_is_unique($title,$ignore_post_id=0){
+    public static function title_is_unique($title,$ignore_post_id=0,$focus_keyword=''){
         $title=trim((string)$title);
         if(!$title)return false;
         $exclude=$ignore_post_id?array(absint($ignore_post_id)):array();
@@ -56,6 +56,9 @@ class GNF5_SEO {
             'no_found_rows'=>true,'post__not_in'=>$exclude,'orderby'=>'date','order'=>'DESC',
         ));
         foreach($q->posts as $id){
+            // Similar wording about different subjects is not the same story.
+            // Structured topic fingerprints perform the broader event check.
+            if($focus_keyword!=='' && strcasecmp(trim((string)get_post_meta($id,'rank_math_focus_keyword',true)),trim($focus_keyword))!==0)continue;
             $existing=trim((string)get_post_meta($id,'rank_math_title',true));
             if(!$existing)$existing=get_the_title($id);
             if(self::title_similarity($title,$existing)>=82)return false;
@@ -251,7 +254,7 @@ class GNF5_SEO {
         $out['slug']=self::limit_slug($d['slug']??$out['title'],75);
         $out['meta_description']=sanitize_text_field($d['meta_description']??'');
         $out['excerpt']=sanitize_textarea_field($d['excerpt']??'');
-        $html=wp_kses_post($d['content_html']??'');
+        $html=wp_kses($d['content_html']??'', array('p'=>array(),'h2'=>array(),'h3'=>array(),'h4'=>array(),'h5'=>array(),'ul'=>array(),'ol'=>array(),'li'=>array(),'strong'=>array(),'em'=>array(),'b'=>array(),'i'=>array(),'blockquote'=>array(),'table'=>array(),'thead'=>array(),'tbody'=>array(),'tr'=>array(),'th'=>array(),'td'=>array(),'br'=>array()));
         $html=preg_replace('/<h1\b[^>]*>.*?<\/h1>/is','',$html);
         $html=preg_replace('/<(?:picture|figure)\b[^>]*>.*?<\/(?:picture|figure)>/is','',$html);
         $html=preg_replace('/<img\b[^>]*>/is','',$html);
@@ -278,48 +281,19 @@ class GNF5_SEO {
             $out['image_prompts'][$i]=sanitize_textarea_field($prompts[$i]??('Original editorial illustration about '.$out['title'].', scene '.($i+1).', no text, no logo, no watermark.'));
             $out['image_alts'][$i]=sanitize_text_field($alts[$i]??(($out['focus_keyword']?:$out['title']).' editorial image '.($i+1)));
         }
-        if($out['focus_keyword'] && !self::contains_exact_phrase($out['image_alts'][0],$out['focus_keyword'])){
-            $out['image_alts'][0]=$out['focus_keyword'].' â€” original editorial image';
-        }
         if(strcasecmp(trim($out['image_prompts'][0]),trim($out['image_prompts'][1]))===0){
             $out['image_prompts'][1].=' Use a clearly different composition, viewpoint, subject arrangement, and visual concept from image 1.';
         }
         if(trim($out['image_alts'][1])==='' || strcasecmp(trim($out['image_alts'][0]),trim($out['image_alts'][1]))===0){
-            $out['image_alts'][1]=sanitize_text_field(($out['title']?:'Article').' â€” supporting editorial image');
+            $out['image_alts'][1]=sanitize_text_field(($out['title']?:'Article').' — supporting editorial image');
         }
         return self::normalize_metadata($out);
     }
 
-    public static function normalize_metadata($d){
-        $kw=trim((string)($d['focus_keyword']??''));
-        if(!$kw)return $d;
-
-        $kw_slug=sanitize_title($kw);
-        if(empty($d['slug']) || ($kw_slug && !self::slug_contains_focus_keyword($d['slug'],$kw))){
-            $d['slug']=sanitize_title($kw.' '.$d['title']);
-        }
-        $d['slug']=self::limit_slug($d['slug'],75);
-
-        $meta=trim((string)($d['meta_description']??''));
-        if(!self::contains_exact_phrase($meta,$kw))$meta=$kw.' â€” '.$meta;
-        if(self::char_len($meta)<120){
-            $extra=trim((string)($d['excerpt']??''));
-            if($extra)$meta.=' '.$extra;
-        }
-        $meta=preg_replace('/\s+/u',' ',$meta);
-        if(self::char_len($meta)>160)$meta=self::trim_chars_word_boundary($meta,158);
-        if(self::char_len($meta)<120){
-            $meta=trim($meta.' Read the key facts, context, and what this '.$kw.' development means.');
-            if(self::char_len($meta)>160)$meta=self::trim_chars_word_boundary($meta,158);
-        }
-        $d['meta_description']=$meta;
-
-        if(isset($d['image_alts'][0]) && !self::contains_exact_phrase($d['image_alts'][0],$kw)){
-            $d['image_alts'][0]=$kw.' â€” original editorial image';
-        }
-        if(isset($d['image_alts'][0],$d['image_alts'][1]) && strcasecmp(trim((string)$d['image_alts'][0]),trim((string)$d['image_alts'][1]))===0){
-            $d['image_alts'][1]=sanitize_text_field(((string)($d['title']??'Article')).' â€” supporting editorial image');
-        }
+    public static function normalize_metadata($d) {
+        $d['slug'] = self::limit_slug($d['slug'] ?? ($d['title'] ?? ''), 75);
+        // No invented year, sentiment, keyword padding or filler description.
+        $d['meta_description'] = self::trim_chars_word_boundary(trim((string)($d['meta_description'] ?? '')), 160);
         return $d;
     }
 
@@ -519,29 +493,46 @@ class GNF5_SEO {
         return $out;
     }
 
-    public static function related_links($post_id,$cat_id,$limit=3){
-        if(empty(GNF5_Utils::settings()['internal_links']))return '';
-        $q=new WP_Query(array(
-            'post_type'=>'post','post_status'=>'publish','posts_per_page'=>max(1,absint($limit)),
-            'post__not_in'=>array(absint($post_id)),'cat'=>absint($cat_id),'no_found_rows'=>true,
-        ));
-        $items='';
-        if($q->have_posts()){
-            foreach($q->posts as $p){
-                $url=get_permalink($p);
-                if($url)$items.='<li><a href="'.esc_url($url).'">'.esc_html(get_the_title($p)).'</a></li>';
-            }
-        }else{
-            // First post in a category: link to the relevant category archive so Rank Math's
-            // normal internal-link test can still be satisfied without inventing another post.
-            $archive=get_category_link(absint($cat_id));
-            $name=get_cat_name(absint($cat_id));
-            if(!is_wp_error($archive) && $archive){
-                $items.='<li><a href="'.esc_url($archive).'">'.esc_html('More '.($name?:'related').' stories').'</a></li>';
-            }
+    public static function related_links($post_id, $cat_id, $limit=3) {
+        // Retained API; insert only topically relevant real published posts.
+        $kw = (string)get_post_meta($post_id, 'rank_math_focus_keyword', true);
+        if (!$kw) return '';
+        $q = get_posts(array('post_type'=>'post','post_status'=>'publish','numberposts'=>20,
+            'category'=>$cat_id,'post__not_in'=>array($post_id),'s'=>$kw));
+        $items = array();
+        foreach ($q as $p) {
+            if (!self::contains_exact_phrase($p->post_title.' '.$p->post_content, $kw)) continue;
+            $items[] = '<a href="'.esc_url(get_permalink($p->ID)).'">'.esc_html(get_the_title($p->ID)).'</a>';
+            if (count($items) >= $limit) break;
         }
-        if($items==='')return '';
-        return self::simple_heading('Related Reading','related-reading').self::simple_list($items);
+        return $items ? self::simple_heading('Related reading','related-reading').self::simple_list($items) : '';
+    }
+
+    public static function insert_internal_links($html, $post_id, $cat_id) {
+        if (empty(GNF5_Utils::settings()['internal_links']) || !class_exists('DOMDocument')) return $html;
+        $kw = trim((string)get_post_meta($post_id, 'rank_math_focus_keyword', true));
+        if ($kw === '') return $html;
+        $posts = get_posts(array('post_type'=>'post','post_status'=>'publish','numberposts'=>12,'category'=>$cat_id,'post__not_in'=>array($post_id),'s'=>$kw));
+        libxml_use_internal_errors(true);
+        $doc = new DOMDocument();
+        @$doc->loadHTML('<?xml encoding="utf-8" ?><div id="gnf-links">'.$html.'</div>', LIBXML_HTML_NOIMPLIED|LIBXML_HTML_NODEFDTD|LIBXML_NONET);
+        $xp = new DOMXPath($doc); $count=0;
+        foreach ($posts as $p) {
+            $anchor = trim(explode(',',(string)get_post_meta($p->ID,'rank_math_focus_keyword',true))[0]);
+            if (!$anchor || !self::contains_exact_phrase($p->post_title.' '.$p->post_content,$kw)) continue;
+            $nodes=array(); foreach ($xp->query('//*[@id="gnf-links"]//p//text()[not(ancestor::a)]') as $n) $nodes[]=$n;
+            foreach ($nodes as $n) {
+                if (!preg_match('/(?<![\p{L}\p{N}])'.preg_quote($anchor,'/').'(?![\p{L}\p{N}])/iu',$n->nodeValue,$m,PREG_OFFSET_CAPTURE)) continue;
+                $at=$m[0][1]; $text=$m[0][0]; $parent=$n->parentNode;
+                $parent->insertBefore($doc->createTextNode(substr($n->nodeValue,0,$at)),$n);
+                $a=$doc->createElement('a');$a->setAttribute('href',get_permalink($p->ID));$a->appendChild($doc->createTextNode($text));
+                $parent->insertBefore($a,$n);$parent->insertBefore($doc->createTextNode(substr($n->nodeValue,$at+strlen($text))),$n);$parent->removeChild($n);
+                $count++;break;
+            }
+            if ($count>=3) break;
+        }
+        $root=$doc->getElementById('gnf-links');$out='';if($root)foreach($root->childNodes as $n)$out.=$doc->saveHTML($n);
+        return $out ?: $html;
     }
 
     public static function external_links_section($links_text,$source_url=''){
@@ -744,144 +735,21 @@ class GNF5_SEO {
         return !empty($q->posts);
     }
 
-    public static function validate($post_id,$d,$image_ids){
-        $errors=array();$warnings=array();
-        $settings=GNF5_Utils::settings();
-        $content=get_post_field('post_content',$post_id);
-        $plain=wp_strip_all_tags($content);
-        // The user's 1000â€“1200 rule applies to the written article body, not generated
-        // navigation such as TOC/Related Reading/Useful Resources.
-        $main_html=(string)($d['content_html']??'');
-        $main_plain=wp_strip_all_tags($main_html);
-        $wc=GNF5_Utils::word_count($main_html);
-        if($wc<1000||$wc>1200)$errors[]='Article body must be 1000â€“1200 words; found '.$wc.'.';
-
-        $kw=trim((string)($d['focus_keyword']??''));
-        if(!$kw)$errors[]='Focus keyword is missing.';
-        else{$kw_words=GNF5_Utils::word_count($kw);if($kw_words<1||$kw_words>3)$errors[]='Focus keyword must be 1â€“3 words for natural Rank Math optimization.';}
-        $rm_kw=trim((string)get_post_meta($post_id,'rank_math_focus_keyword',true));
-        $rm_desc=trim((string)get_post_meta($post_id,'rank_math_description',true));
-        $rm_title=trim((string)get_post_meta($post_id,'rank_math_title',true));
-        $post_title=get_the_title($post_id);
-
-        if(empty($settings['rankmath_enabled']))$errors[]='Rank Math integration is disabled; strict Auto Publish requires Rank Math verification enabled.';
-        elseif(!defined('RANK_MATH_VERSION'))$errors[]='Rank Math verification is enabled but Rank Math was not detected.';
-        elseif(!self::rank_math_schema_module_active())$errors[]='Rank Math Schema module is not active; Rank Math uses this module for its TOC block and Article schema.';
-        if($kw&&!self::begins_with_exact_phrase((string)$d['seo_title'],$kw))$errors[]='SEO title must begin with the exact focus keyword.';
-        if($kw&&!self::contains_exact_phrase($post_title,$kw))$errors[]='Focus keyword missing from WordPress post title.';
-        if($kw&&!self::contains_exact_phrase((string)$d['meta_description'],$kw))$errors[]='Focus keyword missing from meta description.';
-        if($kw&&!self::contains_exact_phrase($main_plain,$kw))$errors[]='Focus keyword missing from article body.';
-        if($kw&&!self::focus_keyword_is_unique($kw,$post_id))$errors[]='Primary focus keyword has already been used by another post; Rank Math focus-keyword uniqueness would fail.';
-        if($kw&&$rm_desc&&!self::contains_exact_phrase($rm_desc,$kw))$errors[]='Saved Rank Math meta description is not synchronized with focus keyword.';
-        if($kw&&$rm_kw&&strcasecmp($rm_kw,$kw)!==0)$errors[]='Saved Rank Math focus keyword is not synchronized.';
-        if($rm_title!=='' && $rm_title!==(string)$d['seo_title'])$errors[]='Saved Rank Math SEO title is not synchronized with final SEO title.';
-
-        $kw_slug=sanitize_title($kw);
-        $actual_slug=(string)get_post_field('post_name',$post_id);
-        if($kw_slug&&!self::slug_contains_focus_keyword($actual_slug,$kw))$errors[]='Exact focus keyword phrase missing from actual WordPress slug.';
-
-        $words=preg_split('/\s+/u',trim($main_plain));
-        $opening_words=implode(' ',array_slice($words,0,max(100,(int)ceil($wc*0.10))));
-        $conclusion_words=implode(' ',array_slice($words,-max(100,(int)ceil($wc*0.12))));
-        if($kw&&!self::contains_exact_phrase($opening_words,$kw))$errors[]='Focus keyword missing from first 10% of article body.';
-        if($kw&&!self::heading_contains_exact_phrase($main_html,$kw))$errors[]='Focus keyword missing from H2/H3.';
-        if($kw&&!self::contains_exact_phrase($conclusion_words,$kw))$errors[]='Focus keyword missing from conclusion/final section.';
-
-        $density=$kw?self::keyword_density($main_html,$kw):0;
-        if($kw&&($density<1.00||$density>1.50))$errors[]='Keyword density outside Rank Math target 1.00â€“1.50% ('.number_format($density,2).'%).';
-
-        $seo_len=self::char_len((string)$d['seo_title']);
-        if($seo_len>60)$errors[]='SEO title exceeds 60 characters; found '.$seo_len.'.';
-        if($seo_len<35)$warnings[]='SEO title is unusually short; target roughly 45â€“60 characters when natural.';
-        if(!self::has_number($d['seo_title']))$errors[]='SEO title does not contain a number/year.';
-        if(!self::has_power_word($d['seo_title']))$errors[]='SEO title does not contain a recognized power word.';
-        if(!self::has_sentiment_word($d['seo_title']))$errors[]='SEO title does not contain one truthful positive or negative sentiment word.';
-        if(!self::title_is_unique($d['seo_title'],$post_id))$errors[]='SEO title is identical or too similar to an existing article.';
-
-        $mdlen=self::char_len((string)$d['meta_description']);
-        if($mdlen<120||$mdlen>160)$errors[]='Meta description should be 120â€“160 characters; found '.$mdlen.'.';
-        if(strlen($actual_slug)>75)$errors[]='Actual WordPress slug exceeds 75 characters.';
-        $actual_permalink=(string)get_permalink($post_id);
-        if($actual_permalink!=='' && self::char_len($actual_permalink)>75){
-            $errors[]='Full WordPress permalink exceeds Rank Math\'s 75-character URL test; found '.self::char_len($actual_permalink).' characters.';
-        }
-
-        if(preg_match('/<h1\b/i',$main_html))$errors[]='Body contains an H1; WordPress post title must be the only H1.';
-        if(!preg_match('/<h2\b/i',$main_html))$errors[]='Article has no H2 headings.';
-        if(!preg_match('/<h3\b/i',$main_html))$warnings[]='Article has no H3 headings; H3 is recommended when useful.';
-        if(!preg_match('/<(ul|ol)\b/i',$main_html))$errors[]='Article has no bullet/number list.';
-        if(!preg_match('/<h2[^>]*>[^<]*(Frequently Asked Questions|FAQ)/iu',$main_html))$errors[]='FAQ section not detected.';
-        $faq_count=self::faq_question_count($main_html);
-        if($faq_count!==3)$errors[]='FAQ must contain exactly 3 H3 questions; found '.$faq_count.'.';
-        $has_rm_toc=function_exists('has_block')?has_block('rank-math/toc-block',$post_id):(strpos($content,'<!-- wp:rank-math/toc-block')!==false);
-        if(!empty($settings['toc_enabled']) && defined('RANK_MATH_VERSION') && !self::rank_math_toc_block_registered())$errors[]='Rank Math TOC block is not registered. Enable Rank Math\'s Schema module and reload WordPress.';
-        if(!empty($settings['toc_enabled']) && !$has_rm_toc)$errors[]='Rank Math Table of Contents block not detected.';
-        if(empty($settings['toc_enabled']))$errors[]='Rank Math Table of Contents is disabled in plugin settings.';
-        $tags=count(wp_get_post_tags($post_id));
-        if($tags<5||$tags>8)$errors[]='Article should have 5â€“8 WordPress tags; found '.$tags.'.';
-
-        if(strpos($content,'<!-- wp:')===false || !function_exists('parse_blocks') || count(parse_blocks($content))<2)$errors[]='Valid Gutenberg block structure was not detected.';
-
-        if(preg_match_all('/<p\b[^>]*>(.*?)<\/p>/is',$main_html,$pm)){
-            foreach($pm[1] as $p){
-                if(GNF5_Utils::word_count(wp_strip_all_tags($p))>70){$errors[]='A paragraph is longer than 70 words; readability repair is required.';break;}
-            }
-        }
-
-        $image_ids=array_values(array_filter(array_map('absint',(array)$image_ids)));
-        if(empty($settings['image_enabled'])){
-            $errors[]='The required 2-image system is disabled; strict validation requires Image 1 featured+inline and Image 2 inline.';
-        }else{
-            if(count($image_ids)!==2)$errors[]='Exactly 2 generated images are required.';
-            if(count(array_unique($image_ids))!==count($image_ids))$errors[]='The 2 generated images must be different attachment files.';
-            $thumb=get_post_thumbnail_id($post_id);
-            if(!$thumb)$errors[]='Featured image is missing.';
-            if($thumb&&!in_array($thumb,$image_ids,true))$errors[]='Featured image must be one of the 2 generated images.';
-            if($thumb&&strpos($content,'wp-image-'.$thumb)===false)$errors[]='Featured image must also appear inside the article.';
-            $alts=array();$kw_alt=false;
-            foreach($image_ids as $id){
-                $file=get_attached_file($id);
-                if(!$file||!file_exists($file))$errors[]='Image file missing for attachment '.$id.'.';
-                $alt=trim((string)get_post_meta($id,'_wp_attachment_image_alt',true));
-                if(!$alt)$errors[]='Image ALT text missing for attachment '.$id.'.';
-                $akey=strtolower($alt);
-                if(isset($alts[$akey]))$errors[]='Image ALT text must be unique.';
-                $alts[$akey]=true;
-                if($kw&&self::contains_exact_phrase($alt,$kw))$kw_alt=true;
-            }
-            if($kw&&!$kw_alt)$errors[]='Focus keyword missing from image ALT text.';
-        }
-
-        $links=self::anchor_audit($content,$post_id);
-        $source_url=GNF5_Utils::normalize_url((string)get_post_meta($post_id,'_gnf5_source_url',true));
-        if($source_url && stripos($content,$source_url)!==false){$links['source_visible']=true;}
-        if($links['source_visible'])$errors[]='Source article URL/host must not be visible in published content.';
-        if(empty($settings['internal_links']))$errors[]='Internal linking is disabled; Rank Math\'s normal internal-link test requires an internal link.';
-        elseif($links['valid_internal']<1)$errors[]='No valid same-site internal link was inserted. The plugin uses a same-category post or category archive.';
-        $cats=wp_get_post_categories($post_id);$cat_id=absint($cats[0]??0);$cs=$cat_id?GNF5_Utils::category_settings($cat_id,$settings):array();
-        $trusted_text=(string)($cs['external_links']??'');
-        $trusted=GNF5_Utils::urls_from_lines($trusted_text);
-        $usable_trusted=$trusted?self::usable_trusted_external_available($trusted_text,$post_id):false;
-        if($links['external']<1){
-            $errors[]='No external resource link is present. Rank Math normally requires relevant external links; add at least one Trusted External DoFollow Link for this category.';
-        }
-        if($links['dofollow_external']<1){
-            $errors[]='No followed external link is present. Rank Math\'s followed-external-link test requires at least one normal DoFollow link.';
-        }
-        if($trusted && !$usable_trusted){
-            $warnings[]='Trusted external links are configured, but none are currently reachable/usable. Add a working trusted link before Auto Publish can pass the external-link tests.';
-        }
-
-        if(defined('RANK_MATH_VERSION') && self::rank_math_schema_module_active() && !self::has_article_schema_type($post_id)){
-            $errors[]='Rank Math Article schema is not active for this post. Configure Posts default Schema as Article/NewsArticle/BlogPosting or add an Article schema in Rank Math.';
-        }
-
-        return array(
-            'errors'=>array_values(array_unique($errors)),
-            'warnings'=>array_values(array_unique($warnings)),
-            'word_count'=>$wc,'density'=>$density,
-            'checks'=>array('faq_count'=>$faq_count,'internal_links'=>$links['valid_internal'],'external_dofollow'=>$links['dofollow_external'],'tags'=>$tags)
-        );
+    public static function validate($post_id, $d, $image_ids) {
+        $content = (string)get_post_field('post_content',$post_id);
+        $warnings = array(); $errors = array();
+        if (!trim($content)) $errors[]='Article body is empty.';
+        if (preg_match('/<h1\b/i',$content)) $errors[]='Body contains H1; use the WordPress title.';
+        if (!has_blocks($content)) $warnings[]='Gutenberg blocks were not detected.';
+        if (!defined('RANK_MATH_VERSION')) $warnings[]='Rank Math not active; SEO score is NOT CHECKED.';
+        if (defined('RANK_MATH_VERSION') && !self::has_article_schema_type($post_id)) $warnings[]='Article schema not detected; review Rank Math schema settings.';
+        $robots=get_post_meta($post_id,'rank_math_robots',true);
+        if (get_option('blog_public')==='0' || in_array('noindex',(array)$robots,true)) $warnings[]='Site/post noindex detected. Drafts are not indexable; check final publishing settings manually.';
+        $canonical=get_post_meta($post_id,'rank_math_canonical_url',true);
+        if ($canonical && GNF5_Utils::same_resource_url($canonical,get_post_meta($post_id,'_gnf5_source_url',true))) $warnings[]='Canonical points to source website; review manually.';
+        return array('errors'=>$errors,'warnings'=>$warnings,'word_count'=>GNF5_Utils::word_count($d['content_html']??$content),
+            'density'=>self::keyword_density($d['content_html']??$content,$d['focus_keyword']??''),
+            'checks'=>array('canonical'=>'Managed by Rank Math/WordPress; no competing canonical added.', 'sitemap'=>'Managed by Rank Math/WordPress; draft inclusion not requested.'));
     }
 
 }

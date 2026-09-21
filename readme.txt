@@ -1,41 +1,43 @@
 === GlobiqNews Fresh AI Publisher ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 5.31.0
+Stable tag: 6.0.0
 
-AI article publisher with Rank Math 80+ publishing and GitHub plugin updates.
+Topic discovery, evidence-backed research, original articles and optional images saved as Drafts for human review.
 
 == Description ==
-Creates category-based articles, saves Rank Math metadata and original images,
-and analyzes final articles using Rank Math Free 1.0.278's actual JavaScript engine.
-Uses your HTTPS scoring service, or local Node.js with PHP proc_open. Publishes only with a verified
-score of 80 or higher when Auto Publish is enabled. The strict checklist does not
-block publishing. Includes settings, draft diagnostics and recovery tools.
-
-GitHub updates use published stable releases from:
-https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
+GDELT, RSS/Atom, category URLs and manual URLs lead to structured facts, independent
+planning, original writing and private quality reports. The final writer does not
+receive full source articles. No score or plugin task automatically publishes.
+Images default OFF on new installations. Existing image choices and credentials
+are preserved. Manual images are protected. Optional original images use WebP.
+Rank Math metadata and its genuine Free 1.0.278 analyzer remain supported; the
+preferred 80/100 target is for optimization only, with at most three improvements.
+Quality scores are internal heuristics and AI reviews requiring human verification.
 
 == Installation ==
-Upload the installable ZIP in WordPress and choose Replace current with uploaded.
-Enable auto-updates on Installed Plugins to receive future published releases.
-Existing settings and API keys remain in WordPress.
+Upload globiqnews-fresh-ai-publisher.zip and select Replace current with uploaded.
+Do not delete the existing plugin. Select a category author, save its settings,
+run discovery or a manual URL, review the Draft, then manually publish in WordPress.
+Test this major workflow update on a staging copy before production.
 
 == Hosting ==
-Shared hosting can use your HTTPS scoring service without local Node.js or proc_open.
-Select remote mode, enter its address and secret, enable article-sharing permission,
-then save settings. The supplied service matches WordPress 7.1 analysis dependencies
-and Rank Math Free 1.0.278. Changed dependencies are refused until verified.
-Local mode requires Node.js 18+, PHP proc_open and temporary storage.
-Missing service/runtime or unsupported Rank Math version keeps Draft.
+Draft creation does not require Node.js or a scoring service. Optional background
+scoring needs local Node.js 18+ / PHP proc_open or your authenticated HTTPS service.
+Without it, use Rank Math in the editor. Missing scores remain NOT CHECKED.
+The remote runtime matches WordPress 7.1 and Rank Math Free 1.0.278 dependencies.
 Rank Math PRO and custom editor JavaScript scoring extensions are not verified.
 
-== Changelog ==
-= 5.31.0 =
-Authenticated remote scoring for shared hosting, with a free Render deployment template.
-= 5.30.0 =
-Actual background analysis, fresh-score publication, bounded retries and one SEO repair.
-= 5.29.0 =
-Adds GitHub plugin updates and preserves the Rank Math 80+ publishing fixes.
+== Updates ==
+Only published stable GitHub releases with the exact installable ZIP are offered.
+Enable plugin auto-updates in WordPress to receive future published code updates.
+Version 6.0.0 is delivered as a review candidate, not automatically released.
 
-= 5.28.0 =
-Fixes existing drafts remaining unpublished despite a saved Rank Math score of 80+.
+== Changelog ==
+= 6.0.0 =
+Research-first original writing, GDELT, quality reports, protected manual images,
+bounded queues and retries, preserved settings, and Draft-only manual publishing.
+= 5.31.0 =
+Added authenticated optional remote analysis for shared hosting.
+= 5.29.0 =
+Added GitHub plugin updates. Earlier automatic article publishing is retired in 6.0.0.
