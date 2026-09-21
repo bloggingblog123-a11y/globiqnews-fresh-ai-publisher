@@ -4,9 +4,21 @@
     function handle(promise,done){promise.done(function(r){if(r&&r.success){status(r.data.message||'Done.',true);if(done)done(true,r);}else{status((r&&r.data&&r.data.message)||'Operation failed.',false);if(done)done(false,r);}}).fail(function(xhr){var msg='Request failed.';if(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message)msg=xhr.responseJSON.data.message;status(msg,false);if(done)done(false,xhr);});}
     function catName(cat){return (GNF5Data.catNames||{})[cat]||('Category '+cat);}
 
+    $(document).on('click','.gnf6-category-manual',function(){
+        var button=$(this),cat=button.data('cat'),url=$('#gnf5-cat-'+cat).find('.gnf6-category-url').val();
+        if(!url){status('Enter an article URL for this category.',false);return;}
+        button.prop('disabled',true);
+        saveCategoryBeforeAction(cat,function(ok){
+            if(!ok){button.prop('disabled',false);return;}
+            status(catName(cat)+': researching the manual article…');
+            var request=call('gnf5_run_manual',{url:url,cat_id:cat});handle(request);
+            request.always(function(){button.prop('disabled',false);});
+        });
+    });
+
     $(document).on('click','.gnf5-check-publish-scores',function(){
         var button=$(this);button.prop('disabled',true);
-        status('Checking saved Rank Math scores and publishing eligible drafts…');
+        status('Checking saved Rank Math scores; articles remain Draft…');
         var request=call('gnf5_check_publish_scores',{});handle(request);
         // Preserve the result on screen so any blocking reason can be read.
         request.always(function(){button.prop('disabled',false);});
@@ -25,7 +37,11 @@
             rss:get('rss').val()||'',
             urls:get('urls').val()||'',
             external_links:get('external_links').val()||'',
-            instructions:get('instructions').val()||''
+            instructions:get('instructions').val()||'',
+            image_mode:get('image_mode').val()||'global',gdelt_enabled:box.find('input[type=checkbox][name$="[gdelt_enabled]"]').is(':checked')?1:0,
+            gdelt_keywords:get('gdelt_keywords').val()||'',gdelt_language:get('gdelt_language').val()||'',gdelt_country:get('gdelt_country').val()||'',
+            gdelt_window:get('gdelt_window').val()||'6h',gdelt_results:get('gdelt_results').val()||50,gdelt_interval:get('gdelt_interval').val()||60,
+            min_sources:get('min_sources').val()||2,max_candidates:get('max_candidates').val()||50,opportunity_threshold:get('opportunity_threshold').val()||60
         };
     }
 
@@ -57,7 +73,7 @@
     }
 
     function runCategoryBatch(cat,limit,onDone){
-        var made=0,requests=0,zeroStreak=0;
+        var made=0,requests=0,zeroStreak=0,runId='ui-'+Date.now()+'-'+Math.random().toString(36).slice(2);
         var summary={published:0,drafts:0,duplicates:0,failed:0,rssFailures:0,sourceFailures:0,rssCandidates:0,sourceCandidates:0,diagnostics:[]};
         limit=Math.max(1,parseInt(limit||1,10));var maxRequests=(limit*4)+4;
 
@@ -66,10 +82,11 @@
         }
         function step(){
             if(made>=limit||requests>=maxRequests||zeroStreak>=5){onDone(made,summary);return;}
-            requests++;status(catName(cat)+': created '+made+' of '+limit+'. Reading RSS/Source candidates…');
-            call('gnf5_run_category',{cat_id:cat,pass:Math.min(4,requests)}).done(function(r){
+            requests++;status(catName(cat)+': created '+made+' of '+limit+'. Reading GDELT/RSS/Source candidates…');
+            call('gnf5_run_category',{cat_id:cat,pass:Math.min(4,requests),run_id:runId}).done(function(r){
                 if(r&&r.success&&r.data.result){
                     var d=r.data.result,c=parseInt(d.created||0,10);made+=c;
+                    if(d.done){onDone(made,summary);return;}
                     summary.published+=parseInt(d.published||0,10);
                     summary.drafts+=parseInt(d.drafts||0,10);
                     summary.duplicates+=parseInt(d.duplicates||0,10);
@@ -127,7 +144,7 @@
             b.text('Running…');
             runCategoryBatch(cat,limit,function(made,summary){
                 var msg=catName(cat)+' run finished. Target '+limit+'; created '+made+
-                    ' | published '+summary.published+' | draft/pending '+summary.drafts+
+                    ' | Drafts '+summary.drafts+
                     ' | duplicates '+summary.duplicates+' | failed before create '+summary.failed+'.';
                 if(made===0){
                     if(summary.rssFailures>0)msg+=' RSS feed error detected.';
@@ -154,7 +171,7 @@
     $(document).on('click','.gnf5-run-manual',function(){var url=$('#gnf5-manual-url').val(),cat=$('#gnf5-manual-cat').val();if(!url){status('Enter an article URL.',false);return;}status('Processing manual article now…');handle(call('gnf5_run_manual',{url:url,cat_id:cat}),function(){setTimeout(function(){location.reload();},800);});});
     $(document).on('click','.gnf5-test-source',function(){var url=$('#gnf5-manual-url').val();if(!url){status('Enter an article URL to test.',false);return;}status('Testing public source extraction…');handle(call('gnf5_test_source',{url:url}));});
     $(document).on('click','.gnf5-test-gemini',function(){status('Testing Gemini with retry protection…');handle(call('gnf5_test_gemini',{}));});
-    $(document).on('click','.gnf5-test-image',function(){status('Generating one temporary test image…');handle(call('gnf5_test_image',{}));});
+    $(document).on('click','.gnf5-test-image',function(){status('Checking image mode and testing the enabled generator…');handle(call('gnf5_test_image',{}));});
     $(document).on('click','.gnf5-clear-log',function(){if(!window.confirm(GNF5Data.strings.confirmClear))return;handle(call('gnf5_clear_log',{}),function(ok){if(ok)$('#gnf5-log').text('No Fresh V5 log entries yet.');});});
     $(document).on('click','.gnf5-clear-lock',function(){var cat=$(this).data('cat');handle(call('gnf5_clear_lock',{cat_id:cat}),function(ok){if(ok)location.reload();});});
 
@@ -280,4 +297,5 @@
         var post=parseInt($(this).data('post'),10);
         handle(call('gnf5_skip_failed',{post_id:post}),function(ok){if(ok)$('#gnf5-recovery-'+post).fadeOut(250,function(){if($('#gnf5-recovery-section .gnf5-recovery:visible').length===0){$('#gnf5-recovery-section').fadeOut(200);}});});
     });
+    $(document).on('change','#gnf5-log-filter',function(){var value=$(this).val();$('#gnf5-log [data-log-type]').each(function(){$(this).toggle(!value||$(this).attr('data-log-type')===value);});});
 })(jQuery);

@@ -4,6 +4,10 @@ if (!defined('ABSPATH')) { exit; }
 class GNF5_Utils {
     private static $lock_tokens = array();
     private static $source_lock_tokens = array();
+    public static function heartbeat_worker() {
+        foreach(array_keys(self::$lock_tokens) as $cat_id)self::touch_lock($cat_id);
+    }
+
     public static function defaults() {
         return array(
             // Existing V5.x keys are intentionally unchanged so an upgrade preserves current settings.
@@ -12,9 +16,13 @@ class GNF5_Utils {
             'gemini_backup_model' => '',
             'post_status' => 'draft', // legacy compatibility
             'auto_publish_enabled' => 0,
-            'auto_publish_recovered' => 1,
+            'auto_publish_recovered' => 0,
+            'seo_analyzer_mode' => 'local',
+            'seo_service_url' => '',
+            'seo_service_key' => '',
+            'seo_service_consent' => 0,
             'validated_success_status' => 'draft',
-            'image_enabled' => 1,
+            'image_enabled' => 0,
             'image_provider' => 'openai',
             'openai_api_key' => '',
             'openai_model' => 'gpt-image-2.5-flare',
@@ -35,27 +43,56 @@ class GNF5_Utils {
             'global_article_instructions' => '',
             'global_seo_instructions' => '',
             'global_image_instructions' => '',
+            'added_value_target' => 70,
+            'originality_retries' => 2,
+            'history_days' => 90,
+            'debug_enabled' => 0,
             'categories' => array(),
         );
     }
 
     public static function settings() {
         $saved = get_option(GNF5_OPTION, array());
-        if (!is_array($saved)) { $saved = array(); }
-        $had_auto_publish = array_key_exists('auto_publish_enabled', $saved);
-        $settings = wp_parse_args($saved, self::defaults());
-
-        // Upgrade migration: preserve the behavior of V5.11's legacy Final Status setting.
-        if (!$had_auto_publish) {
-            $legacy = in_array(($saved['post_status'] ?? 'draft'), array('draft','pending','publish'), true) ? $saved['post_status'] : 'draft';
-            $settings['auto_publish_enabled'] = ($legacy === 'publish') ? 1 : 0;
-            $settings['validated_success_status'] = ($legacy === 'pending') ? 'pending' : 'draft';
-            $settings['auto_publish_recovered'] = 1;
-        }
-        if (!isset($settings['categories']) || !is_array($settings['categories'])) {
-            $settings['categories'] = array();
-        }
+        $settings = wp_parse_args(is_array($saved) ? $saved : array(), self::defaults());
+        $settings['auto_publish_enabled'] = 0;
+        $settings['auto_publish_recovered'] = 0;
+        $settings['post_status'] = $settings['validated_success_status'] = 'draft';
+        if (!is_array($settings['categories'])) $settings['categories'] = array();
         return $settings;
+    }
+
+    public static function migrate() {
+        if (get_option('gnf5_migration_version', '') === '6.0.0') return;
+        $lock = get_option('gnf5_migration_lock', false);
+        if ($lock !== false && (int)$lock < time() - 300) self::delete_lock_value('gnf5_migration_lock', $lock);
+        $token = time();
+        if (!add_option('gnf5_migration_lock', $token, '', false)) return;
+        try {
+            $saved = get_option(GNF5_OPTION, array());
+            if (!is_array($saved)) $saved = array();
+            if (!get_option('gnf5_legacy_publication_preferences', false)) {
+                add_option('gnf5_legacy_publication_preferences', array_intersect_key($saved, array_flip(array('auto_publish_enabled','auto_publish_recovered','post_status','validated_success_status'))), '', false);
+            }
+            $out = wp_parse_args($saved, self::defaults());
+            $out['auto_publish_enabled'] = $out['auto_publish_recovered'] = 0;
+            $out['post_status'] = $out['validated_success_status'] = 'draft';
+            $out['blocked_retry_hours'] = 6;
+            // All existing category values, secrets and explicit image choices survive.
+            update_option(GNF5_OPTION, $out, false);
+            update_option('gnf5_migration_version', '6.0.0', false);
+        } finally { self::delete_lock_value('gnf5_migration_lock', $token); }
+    }
+
+    public static function images_enabled($cat_id = 0) {
+        $s = self::settings();
+        $cs = $cat_id ? self::category_settings($cat_id, $s) : array();
+        $mode = $cs['image_mode'] ?? 'global';
+        return $mode === 'on' || ($mode === 'global' && !empty($s['image_enabled']));
+    }
+
+    public static function category_valid($cat_id) {
+        $cat = get_category(absint($cat_id));
+        return $cat && !is_wp_error($cat);
     }
 
     public static function category_settings($cat_id, $settings = null) {
@@ -66,9 +103,13 @@ class GNF5_Utils {
             'interval' => 'hourly',
             'rss' => '',
             'urls' => '',
-            'author_id' => self::fallback_author_id(),
+            'author_id' => 0,
             'external_links' => '',
             'instructions' => '',
+            'image_mode' => 'global', 'gdelt_enabled' => 0, 'gdelt_keywords' => '',
+            'gdelt_language' => 'english', 'gdelt_country' => '', 'gdelt_window' => '6h',
+            'gdelt_results' => 50, 'gdelt_interval' => 60, 'min_sources' => 2,
+            'max_candidates' => 50, 'opportunity_threshold' => 60,
         );
         $saved = isset($settings['categories'][$cat_id]) && is_array($settings['categories'][$cat_id])
             ? $settings['categories'][$cat_id] : array();
@@ -78,31 +119,41 @@ class GNF5_Utils {
     public static function sanitize_settings($input) {
         $input = is_array($input) ? $input : array();
         $d = self::defaults();
-        $out = array();
-        $out['gemini_api_key'] = sanitize_text_field($input['gemini_api_key'] ?? '');
+        $previous = self::settings();
+        $input = wp_parse_args($input, $previous);
+        $out = $previous;
+        $out['seo_analyzer_mode'] = in_array(($input['seo_analyzer_mode'] ?? $previous['seo_analyzer_mode']), array('local','remote'), true) ? ($input['seo_analyzer_mode'] ?? $previous['seo_analyzer_mode']) : 'local';
+        $out['seo_service_url'] = esc_url_raw(trim($input['seo_service_url'] ?? $previous['seo_service_url']), array('https'));
+        $out['seo_service_key'] = !empty($input['seo_service_key']) ? sanitize_text_field(trim($input['seo_service_key'])) : $previous['seo_service_key'];
+        if (!empty($input['seo_service_clear_key'])) $out['seo_service_key'] = '';
+        $out['seo_service_consent'] = array_key_exists('seo_service_consent', $input) ? (empty($input['seo_service_consent']) ? 0 : 1) : $previous['seo_service_consent'];
+        $out['gemini_api_key'] = !empty($input['gemini_api_key']) ? sanitize_text_field($input['gemini_api_key']) : $previous['gemini_api_key'];
+        if (!empty($input['clear_gemini_api_key'])) $out['gemini_api_key'] = '';
         $out['gemini_model'] = sanitize_text_field($input['gemini_model'] ?? $d['gemini_model']);
         $out['gemini_backup_model'] = sanitize_text_field($input['gemini_backup_model'] ?? '');
-        $out['auto_publish_enabled'] = empty($input['auto_publish_enabled']) ? 0 : 1;
-        $out['auto_publish_recovered'] = empty($input['auto_publish_recovered']) ? 0 : 1;
-        $out['validated_success_status'] = in_array(($input['validated_success_status'] ?? 'draft'), array('draft','pending'), true)
-            ? $input['validated_success_status'] : 'draft';
-        // Keep this legacy key synchronized for old V5 code/data, but V5.12 uses desired_success_status().
-        $out['post_status'] = $out['auto_publish_enabled'] ? 'publish' : $out['validated_success_status'];
+        $out['auto_publish_enabled'] = $out['auto_publish_recovered'] = 0;
+        $out['post_status'] = $out['validated_success_status'] = 'draft';
         $out['image_enabled'] = empty($input['image_enabled']) ? 0 : 1;
         $out['image_provider'] = in_array(($input['image_provider'] ?? 'openai'), array('openai','webui','builtin'), true)
             ? $input['image_provider'] : 'openai';
-        $out['openai_api_key'] = sanitize_text_field($input['openai_api_key'] ?? '');
+        $out['openai_api_key'] = !empty($input['openai_api_key']) ? sanitize_text_field($input['openai_api_key']) : $previous['openai_api_key'];
+        if (!empty($input['clear_openai_api_key'])) $out['openai_api_key'] = '';
         $out['openai_model'] = sanitize_text_field($input['openai_model'] ?? $d['openai_model']);
         $out['openai_quality'] = in_array(($input['openai_quality'] ?? 'low'), array('low','medium','high','xhigh','max','auto'), true)
             ? $input['openai_quality'] : 'low';
         $out['openai_size'] = in_array(($input['openai_size'] ?? '1536x1024'), array('1024x1024','1024x1536','1536x1024'), true)
             ? $input['openai_size'] : '1536x1024';
         $out['webui_endpoint'] = esc_url_raw(rtrim($input['webui_endpoint'] ?? $d['webui_endpoint'], '/'));
-        $out['webui_api_key'] = sanitize_text_field($input['webui_api_key'] ?? '');
+        $out['webui_api_key'] = !empty($input['webui_api_key']) ? sanitize_text_field($input['webui_api_key']) : $previous['webui_api_key'];
+        if (!empty($input['clear_webui_api_key'])) $out['webui_api_key'] = '';
         $out['webui_model'] = sanitize_text_field($input['webui_model'] ?? '');
         $out['builtin_fallback'] = empty($input['builtin_fallback']) ? 0 : 1;
         $out['webp_quality'] = min(90, max(50, absint($input['webp_quality'] ?? 72)));
-        $out['blocked_retry_hours'] = min(72, max(1, absint($input['blocked_retry_hours'] ?? 6)));
+        $out['blocked_retry_hours'] = 6;
+        $out['added_value_target'] = min(100, max(0, absint($input['added_value_target'] ?? $previous['added_value_target'])));
+        $out['originality_retries'] = min(2, absint($input['originality_retries'] ?? $previous['originality_retries']));
+        $out['history_days'] = min(365, max(7, absint($input['history_days'] ?? $previous['history_days'])));
+        $out['debug_enabled'] = empty($input['debug_enabled']) ? 0 : 1;
         $out['auto_recovery_enabled'] = empty($input['auto_recovery_enabled']) ? 0 : 1;
         $out['auto_recovery_max_attempts'] = min(5, max(1, absint($input['auto_recovery_max_attempts'] ?? 3)));
         $out['rankmath_enabled'] = empty($input['rankmath_enabled']) ? 0 : 1;
@@ -139,6 +190,7 @@ class GNF5_Utils {
 
     public static function sanitize_category_row($row) {
         if (!is_array($row)) { $row = array(); }
+        $row = wp_parse_args($row, self::category_settings(0));
         $valid_intervals = array('gnf5_30m','hourly','gnf5_2h','gnf5_4h','gnf5_6h','gnf5_12h','daily');
         return array(
             'enabled' => empty($row['enabled']) ? 0 : 1,
@@ -149,6 +201,17 @@ class GNF5_Utils {
             'author_id' => self::valid_author_id($row['author_id'] ?? 0),
             'external_links' => self::sanitize_url_lines($row['external_links'] ?? ''),
             'instructions' => sanitize_textarea_field($row['instructions'] ?? ''),
+            'image_mode' => in_array($row['image_mode'] ?? 'global', array('global','on','off'), true) ? ($row['image_mode'] ?? 'global') : 'global',
+            'gdelt_enabled' => empty($row['gdelt_enabled']) ? 0 : 1,
+            'gdelt_keywords' => self::safe_substr(sanitize_text_field($row['gdelt_keywords'] ?? ''), 0, 500),
+            'gdelt_language' => preg_replace('/[^a-z]/', '', strtolower($row['gdelt_language'] ?? 'english')),
+            'gdelt_country' => preg_replace('/[^a-z]/', '', strtolower($row['gdelt_country'] ?? '')),
+            'gdelt_window' => in_array($row['gdelt_window'] ?? '6h', array('1h','6h','12h','24h','3d','7d'), true) ? ($row['gdelt_window'] ?? '6h') : '6h',
+            'gdelt_results' => min(100, max(5, absint($row['gdelt_results'] ?? 50))),
+            'gdelt_interval' => min(1440, max(15, absint($row['gdelt_interval'] ?? 60))),
+            'min_sources' => min(5, max(1, absint($row['min_sources'] ?? 2))),
+            'max_candidates' => min(100, max(1, absint($row['max_candidates'] ?? 50))),
+            'opportunity_threshold' => min(100, absint($row['opportunity_threshold'] ?? 60)),
         );
     }
 
@@ -179,7 +242,7 @@ class GNF5_Utils {
         $author_id = absint($author_id);
         $user = $author_id ? get_user_by('id', $author_id) : false;
         if ($user && user_can($user, 'edit_posts')) { return $author_id; }
-        return self::fallback_author_id();
+        return 0;
     }
 
     public static function sanitize_url_lines($text) {
@@ -206,6 +269,12 @@ class GNF5_Utils {
         $parts = wp_parse_url($url);
         if (!$parts || empty($parts['scheme']) || empty($parts['host'])) { return ''; }
         if (!in_array(strtolower((string)$parts['scheme']), array('http','https'), true)) { return ''; }
+
+        if (!empty($parts['user']) || !empty($parts['pass'])) return '';
+        $host_check = strtolower(trim($parts['host'], '[]'));
+        if ($host_check === 'localhost' || preg_match('/\.(?:localhost|local|internal)$/i', $host_check) || strpos($host_check, '.') === false) return '';
+        if (filter_var($host_check, FILTER_VALIDATE_IP) && !filter_var($host_check, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return '';
+        if (isset($parts['port']) && !in_array((int)$parts['port'], array(80,443), true)) return '';
 
         // Preserve functional query strings exactly (order, duplicate keys and encoding).
         // Rebuilding with parse_str/http_build_query can break signed feeds and publisher URLs.
@@ -289,25 +358,19 @@ class GNF5_Utils {
     }
 
     public static function log($message, $type = 'info', $cat_id = 0) {
+        if($type==='debug' && empty(self::settings()['debug_enabled']))return;
         $log = get_option(GNF5_LOG_OPTION, array());
         if (!is_array($log)) { $log = array(); }
         array_unshift($log, array(
             'time' => current_time('mysql'),
             'type' => sanitize_key($type),
             'cat' => absint($cat_id),
-            'message' => wp_strip_all_tags((string)$message),
+            'message' => self::redact($message),
         ));
         update_option(GNF5_LOG_OPTION, array_slice($log, 0, 250), false);
     }
 
-    public static function desired_success_status($is_recovery = false) {
-        $s = self::settings();
-        if (!empty($s['auto_publish_enabled'])) {
-            if (!$is_recovery || !empty($s['auto_publish_recovered'])) { return 'publish'; }
-        }
-        return in_array(($s['validated_success_status'] ?? 'draft'), array('draft','pending'), true)
-            ? $s['validated_success_status'] : 'draft';
-    }
+    public static function desired_success_status($is_recovery = false) { return 'draft'; }
 
     public static function adaptive_scan_limit($post_limit) {
         $post_limit = min(10, max(1, absint($post_limit)));
@@ -328,14 +391,16 @@ class GNF5_Utils {
         if (get_option(GNF5_OPTION, null) === null) {
             add_option(GNF5_OPTION, self::defaults(), '', false);
         }
+        self::migrate();
         self::reschedule_all();
         self::ensure_recovery_schedule();
     }
 
     public static function deactivate() {
-        wp_clear_scheduled_hook(GNF5_CRON_HOOK);
+        if(class_exists('GNF5_RankMath'))wp_unschedule_hook(GNF5_RankMath::HOOK);
+        wp_unschedule_hook(GNF5_CRON_HOOK);
         if (defined('GNF5_RECOVERY_CRON_HOOK')) { wp_clear_scheduled_hook(GNF5_RECOVERY_CRON_HOOK); }
-        if (defined('GNF5_CRON_CONTINUE_HOOK')) { wp_clear_scheduled_hook(GNF5_CRON_CONTINUE_HOOK); }
+        if (defined('GNF5_CRON_CONTINUE_HOOK')) { wp_unschedule_hook(GNF5_CRON_CONTINUE_HOOK); }
         if (defined('GNF5_BULK_RECOVERY_HOOK')) { wp_clear_scheduled_hook(GNF5_BULK_RECOVERY_HOOK); }
         if (defined('GNF5_BULK_RECOVERY_LOCK')) { delete_option(GNF5_BULK_RECOVERY_LOCK); }
         foreach(get_categories(array('hide_empty'=>false)) as $cat){ self::end_cron_chain($cat->term_id); self::force_clear_lock($cat->term_id); }
@@ -344,8 +409,8 @@ class GNF5_Utils {
     }
 
     public static function reschedule_all() {
-        wp_clear_scheduled_hook(GNF5_CRON_HOOK);
-        if (defined('GNF5_CRON_CONTINUE_HOOK')) { wp_clear_scheduled_hook(GNF5_CRON_CONTINUE_HOOK); }
+        wp_unschedule_hook(GNF5_CRON_HOOK);
+        if (defined('GNF5_CRON_CONTINUE_HOOK')) { wp_unschedule_hook(GNF5_CRON_CONTINUE_HOOK); }
         foreach(get_categories(array('hide_empty'=>false)) as $cat){ self::end_cron_chain($cat->term_id); }
         $settings = self::settings();
         foreach (get_categories(array('hide_empty' => false)) as $cat) {
@@ -360,7 +425,7 @@ class GNF5_Utils {
     public static function ensure_recovery_schedule() {
         if (!defined('GNF5_RECOVERY_CRON_HOOK')) { return; }
         $s = self::settings();
-        if (empty($s['auto_recovery_enabled']) && empty($s['auto_publish_enabled'])) {
+        if (empty($s['auto_recovery_enabled']) && empty($s['rankmath_enabled'])) {
             wp_clear_scheduled_hook(GNF5_RECOVERY_CRON_HOOK);
             return;
         }
@@ -456,12 +521,14 @@ class GNF5_Utils {
 
     public static function start_cron_chain($cat_id,$target=1) {
         if(self::cron_chain_active($cat_id))return false;
-        set_transient(self::cron_chain_key($cat_id),array('started'=>time(),'target'=>max(1,absint($target)),'touched'=>time()),45*MINUTE_IN_SECONDS);
+        set_transient(self::cron_chain_key($cat_id),array('id'=>wp_generate_uuid4(),'started'=>time(),'target'=>max(1,absint($target)),'touched'=>time()),45*MINUTE_IN_SECONDS);
         return true;
     }
 
     public static function touch_cron_chain($cat_id,$target=1) {
-        set_transient(self::cron_chain_key($cat_id),array('started'=>time(),'target'=>max(1,absint($target)),'touched'=>time()),45*MINUTE_IN_SECONDS);
+        $state=get_transient(self::cron_chain_key($cat_id));
+        if(!is_array($state)){self::start_cron_chain($cat_id,$target);return;}
+        $state['touched']=time();set_transient(self::cron_chain_key($cat_id),$state,45*MINUTE_IN_SECONDS);
     }
 
     public static function end_cron_chain($cat_id) { delete_transient(self::cron_chain_key($cat_id)); }
@@ -482,15 +549,36 @@ class GNF5_Utils {
         if($legacy)delete_transient($key);
 
         $token=wp_generate_uuid4();
-        $state=array('time'=>time(),'token'=>$token);
+        $state=array('time'=>time(),'token'=>$token,'category'=>$cat_id);
+        // One worker across categories, manual imports, recovery and SEO retries.
+        $global='gnf5_article_worker';
+        if(!add_option($global,$state,'','no')){
+            $old=get_option($global,array());
+            if(self::lock_fresh($old,1800))return false;
+            self::delete_lock_value($global,$old);
+            if(!add_option($global,$state,'','no'))return false;
+        }
         if(!add_option($key,$state,'','no')){
             $existing=get_option($key,array());
-            if(self::lock_fresh($existing,900))return false;
-            delete_option($key);
-            if(!add_option($key,$state,'','no'))return false;
+            if(self::lock_fresh($existing,900)){self::delete_lock_value($global,$state);return false;}
+            self::delete_lock_value($key,$existing);
+            if(!add_option($key,$state,'','no')){self::delete_lock_value($global,$state);return false;}
         }
         self::$lock_tokens[$cat_id]=$token;
         return true;
+    }
+
+    public static function delete_lock_value($key,$value) {
+        global $wpdb;
+        $deleted=$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name=%s AND option_value=%s",$key,maybe_serialize($value)));
+        if($deleted){wp_cache_delete($key,'options');wp_cache_delete('alloptions','options');}
+        return (bool)$deleted;
+    }
+
+    public static function owns_lock($cat_id) {
+        $token=self::$lock_tokens[absint($cat_id)]??'';
+        $global=get_option('gnf5_article_worker',array());
+        return $token!=='' && is_array($global) && hash_equals((string)($global['token']??''),$token);
     }
 
     public static function touch_lock($cat_id) {
@@ -502,6 +590,10 @@ class GNF5_Utils {
         if(!is_array($existing) || !hash_equals((string)($existing['token']??''),(string)$token))return false;
         $existing['time']=time();
         update_option($key,$existing,false);
+        $global=get_option('gnf5_article_worker',array());
+        if(is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){
+            $global['time']=time();update_option('gnf5_article_worker',$global,false);
+        }
         return true;
     }
 
@@ -512,17 +604,36 @@ class GNF5_Utils {
         $existing=get_option($key,array());
         // Never delete a lock acquired later by another request after this request became stale.
         if($token!=='' && is_array($existing) && hash_equals((string)($existing['token']??''),(string)$token)){
-            delete_option($key);
+            self::delete_lock_value($key,$existing);
         }
+        $global=get_option('gnf5_article_worker',array());
+        if($token!==''&&is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){self::delete_lock_value('gnf5_article_worker',$global);}
         unset(self::$lock_tokens[$cat_id]);
         delete_transient($key); // legacy cleanup only
     }
 
     public static function force_clear_lock($cat_id) {
-        $cat_id=absint($cat_id);
-        delete_option(self::lock_key($cat_id));
+        $cat_id = absint($cat_id);
+        $keys = array(self::lock_key($cat_id), 'gnf5_article_worker');
+        foreach ($keys as $key) {
+            $state = get_option($key, array());
+            if (!$state || (int)($state['category'] ?? $cat_id) !== $cat_id) continue;
+            if (self::lock_fresh($state, 1800)) return false;
+        }
+        foreach ($keys as $key) {
+            $state = get_option($key, array());
+            if ($state && (int)($state['category'] ?? $cat_id) === $cat_id) self::delete_lock_value($key, $state);
+        }
+        $legacy = get_transient(self::lock_key($cat_id));
+        if (self::lock_fresh($legacy, 1800)) return false;
         delete_transient(self::lock_key($cat_id));
         unset(self::$lock_tokens[$cat_id]);
+        return true;
+    }
+
+    public static function stale_lock($cat_id) {
+        $state = get_option(self::lock_key($cat_id), array());
+        return $state && !self::lock_fresh($state, 1800);
     }
 
     public static function is_locked($cat_id) {
@@ -530,7 +641,7 @@ class GNF5_Utils {
         $key=self::lock_key($cat_id);
         $state=get_option($key,array());
         if(self::lock_fresh($state,900))return true;
-        if($state)delete_option($key);
+        if($state)self::delete_lock_value($key,$state);
         $legacy=get_transient($key);
         if(self::lock_fresh($legacy,900))return true;
         if($legacy)delete_transient($key);
@@ -551,7 +662,7 @@ class GNF5_Utils {
         if(!add_option($key,$state,'','no')){
             $existing=get_option($key,array());
             if(self::lock_fresh($existing,2700))return false;
-            delete_option($key);
+            self::delete_lock_value($key,$existing);
             if(!add_option($key,$state,'','no'))return false;
         }
         self::$source_lock_tokens[$key]=$token;
@@ -563,7 +674,7 @@ class GNF5_Utils {
         $token=self::$source_lock_tokens[$key]??'';
         $existing=get_option($key,array());
         if($token!=='' && is_array($existing) && hash_equals((string)($existing['token']??''),(string)$token)){
-            delete_option($key);
+            self::delete_lock_value($key,$existing);
         }
         unset(self::$source_lock_tokens[$key]);
     }
@@ -572,9 +683,22 @@ class GNF5_Utils {
     public static function is_blocked_cached($url) { return (bool)get_transient(self::blocked_key($url)); }
 
     public static function mark_blocked($url, $reason = 'blocked') {
-        $s = self::settings();
-        $ttl = max(1, absint($s['blocked_retry_hours'])) * HOUR_IN_SECONDS;
-        set_transient(self::blocked_key($url), sanitize_text_field($reason), $ttl);
+        $key = self::blocked_key($url);
+        $old = get_transient($key);
+        $row = array('url'=>self::redact($url), 'reason'=>self::redact($reason), 'time'=>time(),
+            'next_retry'=>time()+6*HOUR_IN_SECONDS, 'attempts'=>is_array($old) ? (int)($old['attempts'] ?? 0)+1 : 1);
+        set_transient($key, $row, 6*HOUR_IN_SECONDS);
+        return $row;
+    }
+
+    public static function redact($message) {
+        $message = (string)$message;
+        $saved = get_option(GNF5_OPTION, array());
+        foreach (array('gemini_api_key','openai_api_key','webui_api_key','seo_service_key') as $key) {
+            if (!empty($saved[$key])) $message = str_replace($saved[$key], '[redacted]', $message);
+        }
+        $message = preg_replace('/([?&](?:key|api_key|token|secret|signature|password)=)[^&\s]+/i', '$1[redacted]', $message);
+        return self::safe_substr(wp_strip_all_tags($message), 0, 2500);
     }
 
     public static function duplicate_post_id($url) {

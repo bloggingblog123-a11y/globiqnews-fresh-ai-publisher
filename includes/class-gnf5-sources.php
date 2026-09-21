@@ -2,15 +2,24 @@
 if (!defined('ABSPATH')) { exit; }
 
 class GNF5_Sources {
+    private static $requests = 0;
+    public static function reset_budget() { self::$requests = 0; }
+    public static function request_count() { return self::$requests; }
+    public static function access_error($error) {
+        return is_wp_error($error) && in_array($error->get_error_code(), array('blocked','blocked_cached','challenge','paywall','login','http_request_failed','request_budget'), true);
+    }
+
     public static function fetch($url, $purpose = 'page') {
         $url = GNF5_Utils::normalize_url($url);
         if (!$url) { return new WP_Error('invalid_url', 'A valid public HTTP/HTTPS URL was not provided.'); }
         if (GNF5_Utils::is_blocked_cached($url)) {
             return new WP_Error('blocked_cached', 'Source is temporarily skipped because it was recently blocked or rate limited.');
         }
+        if (++self::$requests > 40) return new WP_Error('request_budget', 'Source request budget reached; retry later.');
+        GNF5_Utils::log('Fetch '.$purpose.' request '.self::$requests.': '.$url,'debug');
         $response = wp_safe_remote_get($url, array(
-            'timeout' => 35,
-            'redirection' => 5,
+            'timeout' => 15, 'limit_response_size' => 1024*1024,
+            'redirection' => 3,
             'user-agent' => 'GlobiqNewsFreshPublisher/' . GNF5_VERSION . ' (+'.home_url('/').')',
             'headers' => array(
                 'Accept' => $purpose === 'feed'
@@ -19,9 +28,10 @@ class GNF5_Sources {
                 'Accept-Language' => 'en-US,en;q=0.8',
             ),
         ));
-        if (is_wp_error($response)) { return $response; }
+        if (is_wp_error($response)) { GNF5_Utils::mark_blocked($url, $response->get_error_message()); return $response; }
         $code = absint(wp_remote_retrieve_response_code($response));
         $body = (string)wp_remote_retrieve_body($response);
+        if (strlen($body) >= 1024*1024) return new WP_Error('source_size','Source exceeds the 1 MB response limit.');
         $content_type = strtolower((string)wp_remote_retrieve_header($response, 'content-type'));
         if (in_array($code, array(401,403,429), true)) {
             GNF5_Utils::mark_blocked($url, 'HTTP '.$code);
@@ -29,6 +39,12 @@ class GNF5_Sources {
         }
         if ($code < 200 || $code >= 400) {
             return new WP_Error('http', 'HTTP '.$code.' for '.$url);
+        }
+        if (preg_match('/"isAccessibleForFree"\s*:\s*(?:false|"false")/i', $body)) {
+            GNF5_Utils::mark_blocked($url, 'Paywall declared by publisher'); return new WP_Error('paywall','Publisher declares a paywall; no bypass or alternate fetch.');
+        }
+        if (preg_match('/<input[^>]+type=[\"\']password/i', $body) && GNF5_Utils::word_count($body)<250) {
+            GNF5_Utils::mark_blocked($url, 'Login required'); return new WP_Error('login','Login required; skipped.');
         }
         // Detect real challenge pages conservatively. A legitimate news article may contain
         // ordinary phrases such as "access denied" or "captcha", so one generic phrase alone
@@ -96,7 +112,16 @@ class GNF5_Sources {
         $simplepie_error = '';
         $cache_filter = function(){ return 300; };
         add_filter('wp_feed_cache_transient_lifetime', $cache_filter);
-        $feed = fetch_feed($feed_url);
+        $f = self::fetch($feed_url, 'feed');
+        if (is_wp_error($f)) { remove_filter('wp_feed_cache_transient_lifetime', $cache_filter); return $f; }
+        require_once ABSPATH . WPINC . '/class-simplepie.php';
+        $parser = class_exists('SimplePie\SimplePie') ? 'SimplePie\SimplePie' : 'SimplePie';
+        $feed = new $parser();
+        $feed->set_raw_data($f['body']);
+        $feed->enable_cache(false);
+        $feed->enable_order_by_date(true);
+        $feed->set_autodiscovery_level(0);
+        if (!$feed->init()) $feed = new WP_Error('feed_parse', 'WordPress feed parser did not accept this response.');
         remove_filter('wp_feed_cache_transient_lifetime', $cache_filter);
         if (!is_wp_error($feed)) {
             foreach ($feed->get_items(0, $limit) as $item) {
@@ -107,7 +132,8 @@ class GNF5_Sources {
                 $fallback = GNF5_Utils::word_count($content) >= GNF5_Utils::word_count($description) ? $content : $description;
                 $out[] = array(
                     'url'=>$url,'title'=>sanitize_text_field($item->get_title()),
-                    'fallback_text'=>trim($fallback),'method'=>'RSS/Atom (WordPress)',
+                    'fallback_text'=>GNF5_Utils::safe_substr(trim($fallback),0,18000),'method'=>'RSS/Atom (WordPress)',
+                    'published_at'=>$item->get_date('c') ?: '', 'source_author'=>$item->get_author() ? $item->get_author()->get_name() : '',
                 );
             }
             $out = self::unique_items($out);
@@ -116,11 +142,7 @@ class GNF5_Sources {
             $simplepie_error = $feed->get_error_message();
         }
 
-        // Direct fetch fallback helps when SimplePie rejects a valid feed or a host varies content headers.
-        $f = self::fetch($feed_url, 'feed');
-        if (is_wp_error($f)) {
-            return $simplepie_error ? new WP_Error('rss', $simplepie_error.' | Direct feed fetch: '.$f->get_error_message()) : $f;
-        }
+        // Reuse the bounded response; raw-data parsing must never trigger another network fetch.
 
         if (self::looks_like_feed($f['body'], $f['content_type'])) {
             $out = self::parse_raw_feed($f['body'], $f['url'], $limit);
@@ -230,23 +252,7 @@ class GNF5_Sources {
     public static function discover_source($url, $limit = 15) {
         $limit = max(1, absint($limit));
         $f = self::fetch($url, 'page');
-        if (is_wp_error($f)) {
-            $normalized=GNF5_Utils::normalize_url($url);
-            // A direct article-shaped URL can still be handed to the extraction stage,
-            // where official public print/alternate fallbacks may work safely.
-            $path=(string)wp_parse_url($normalized,PHP_URL_PATH);
-            $direct_shape=(bool)(preg_match('~/articleshow/\d+\.cms$~i',$path) || preg_match('~/(?:article|story|post)/[^/]{8,}/?$~i',$path) || (strlen($path)>35 && preg_match('~\.(?:html?|cms)$~i',$path)));
-            if($direct_shape){
-                return array(array('url'=>$normalized,'title'=>'','fallback_text'=>'','method'=>'Direct Source Article (public fallback pending)'));
-            }
-            // Public sitemap is a permitted fallback when the presentation page itself is blocked.
-            $map=self::sitemap_candidates($normalized,$limit);
-            if(!is_wp_error($map)){
-                $map=self::filter_items_to_source_scope($map,$normalized);
-                if($map)return array_slice($map,0,$limit);
-            }
-            return $f;
-        }
+        if (is_wp_error($f)) return $f;
 
         // A feed pasted into Source URLs still works.
         // First use the already-fetched XML, then fall back to the full RSS engine
@@ -514,7 +520,7 @@ class GNF5_Sources {
         }
         libxml_use_internal_errors(true);
         $doc = new DOMDocument();
-        if (!@$doc->loadXML($xml, LIBXML_NOCDATA | LIBXML_NOWARNING | LIBXML_NOERROR)) {
+        if (!@$doc->loadXML($xml, LIBXML_NOCDATA | LIBXML_NOWARNING | LIBXML_NOERROR | LIBXML_NONET)) {
             return new WP_Error('rss_xml', 'Feed XML could not be parsed.');
         }
         $xp = new DOMXPath($doc);
@@ -741,6 +747,7 @@ class GNF5_Sources {
     public static function test_external_link($url, $force = false) {
         $url = GNF5_Utils::normalize_url($url);
         if (!$url) { return new WP_Error('external_url', 'Invalid external URL.'); }
+        if (GNF5_Utils::is_blocked_cached($url)) return new WP_Error('blocked_cached','Source remains in its six-hour retry delay.');
 
         $home_host = self::host_key(home_url('/'));
         if (self::host_key($url) === $home_host) {
@@ -754,25 +761,29 @@ class GNF5_Sources {
         }
 
         $args = array(
-            'timeout'=>12,'redirection'=>5,
+            'timeout'=>12,'redirection'=>3,'limit_response_size'=>4096,
             'user-agent'=>'GlobiqNewsFreshPublisher/'.GNF5_VERSION.' (+'.home_url('/').')',
             'headers'=>array('Accept'=>'text/html,application/xhtml+xml,*/*;q=0.7'),
         );
 
+        if (++self::$requests > 40) return new WP_Error('request_budget','Source request budget reached.');
         $response = wp_safe_remote_head($url, $args);
         $code = is_wp_error($response) ? 0 : absint(wp_remote_retrieve_response_code($response));
 
-        if (is_wp_error($response) || in_array($code, array(0,405,501), true)) {
+        if (!is_wp_error($response) && in_array($code, array(405,501), true)) {
+            if (++self::$requests > 40) return new WP_Error('request_budget','Source request budget reached.');
             $args['limit_response_size'] = 4096;
             $response = wp_safe_remote_get($url, $args);
             $code = is_wp_error($response) ? 0 : absint(wp_remote_retrieve_response_code($response));
         }
 
         if (is_wp_error($response)) {
+            GNF5_Utils::mark_blocked($url,$response->get_error_message());
             $result = array('url'=>$url,'status'=>'unavailable','code'=>0,'message'=>$response->get_error_message());
         } elseif ($code >= 200 && $code < 400) {
             $result = array('url'=>$url,'status'=>'ok','code'=>$code,'message'=>'Public link reachable.');
         } elseif (in_array($code, array(401,403,429), true)) {
+            GNF5_Utils::mark_blocked($url,'HTTP '.$code);
             $result = array('url'=>$url,'status'=>'restricted','code'=>$code,'message'=>'Server restricted automated checking; link may still work for normal visitors.');
         } elseif (in_array($code, array(404,410), true)) {
             $result = array('url'=>$url,'status'=>'broken','code'=>$code,'message'=>'Link returned HTTP '.$code.'.');
@@ -787,43 +798,36 @@ class GNF5_Sources {
     public static function extract_article($url, $rss_fallback = '') {
         $canonical = GNF5_Utils::normalize_url($url);
         $f = self::fetch($canonical, 'page');
-        if (is_wp_error($f)) {
-            // Safe deterministic public alternatives (for example an official print URL)
-            // may still be available even when the normal presentation URL blocks server fetches.
-            foreach (self::public_alternative_urls('', $canonical) as $alt) {
-                if (GNF5_Utils::same_resource_url($alt, $canonical)) { continue; }
-                $af = self::fetch($alt, 'page');
-                if (is_wp_error($af)) { continue; }
-                $ap = self::parse_article_html($af['body'], $canonical);
-                if (!is_wp_error($ap) && GNF5_Utils::word_count($ap['text']) >= 80) {
-                    $ap['url'] = $canonical;
-                    $ap['method'] = 'Official public print/alternate fallback';
-                    return $ap;
-                }
-            }
-            if (GNF5_Utils::word_count($rss_fallback) >= 80) {
-                return array('url'=>$canonical,'title'=>'','text'=>trim($rss_fallback),'method'=>'RSS text fallback');
-            }
-            return $f;
-        }
+        // A blocked/error response is terminal for this URL. No AMP/print/RSS bypass.
+        if (is_wp_error($f)) return $f;
         $parsed = self::parse_article_html($f['body'], $f['url']);
-        if (!is_wp_error($parsed) && GNF5_Utils::word_count($parsed['text']) >= 80) { return $parsed; }
-
-        $alts = self::public_alternative_urls($f['body'], $f['url']);
-        foreach ($alts as $alt) {
-            $af = self::fetch($alt, 'page');
-            if (is_wp_error($af)) { continue; }
-            $ap = self::parse_article_html($af['body'], $f['url']);
-            if (!is_wp_error($ap) && GNF5_Utils::word_count($ap['text']) >= 80) {
-                $ap['url'] = $f['url'];
-                $ap['method'] = 'Public AMP/print fallback';
-                return $ap;
+        if (is_wp_error($parsed)) return $parsed;
+        if (GNF5_Utils::word_count($parsed['text']) < 40) return new WP_Error('thin_source','Insufficient accessible source facts.');
+        $parsed['text'] = GNF5_Utils::safe_substr($parsed['text'],0,22000);
+        $parsed['headings']=array();$parsed['links']=array();$parsed['published_at']='';$parsed['source_author']='';
+        if (class_exists('DOMDocument')) {
+            libxml_use_internal_errors(true);$doc=new DOMDocument();
+            @$doc->loadHTML('<?xml encoding="utf-8" ?>'.$f['body'],LIBXML_NOWARNING|LIBXML_NOERROR|LIBXML_NONET);
+            $xp=new DOMXPath($doc);
+            foreach($xp->query('//article//h2 | //article//h3 | //main//h2 | //main//h3') as $n) {
+                $parsed['headings'][]=sanitize_text_field($n->textContent);if(count($parsed['headings'])>=25)break;
+            }
+            foreach($xp->query('//article//a[@href] | //main//a[@href]') as $a) {
+                $u=self::absolute_url($a->getAttribute('href'),$f['url']);
+                if(!$u || self::host_key($u)===self::host_key($f['url']))continue;
+                $label=sanitize_text_field($a->textContent);
+                // Only text research links, never image/PDF/media downloads.
+                if(preg_match('/\.(?:png|jpe?g|webp|gif|svg|pdf|mp4|zip)(?:\?|$)/i',$u))continue;
+                $parsed['links'][]=array('url'=>$u,'label'=>$label);
+                if(count($parsed['links'])>=12)break;
+            }
+            foreach($doc->getElementsByTagName('meta') as $m) {
+                $key=strtolower($m->getAttribute('property') ?: $m->getAttribute('name'));
+                if(in_array($key,array('article:published_time','date','datepublished'),true))$parsed['published_at']=sanitize_text_field($m->getAttribute('content'));
+                if(in_array($key,array('author','article:author'),true))$parsed['source_author']=sanitize_text_field($m->getAttribute('content'));
             }
         }
-        if (GNF5_Utils::word_count($rss_fallback) >= 80) {
-            return array('url'=>$f['url'],'title'=>is_wp_error($parsed)?'':($parsed['title']??''),'text'=>trim($rss_fallback),'method'=>'RSS text fallback');
-        }
-        return new WP_Error('extract_short', 'Could not extract enough public article text from '.$f['url']);
+        return $parsed;
     }
 
     private static function parse_article_html($html, $canonical_url) {
@@ -958,17 +962,41 @@ class GNF5_Sources {
         return array_values(array_unique(array_filter(array_map(array('GNF5_Utils','normalize_url'),$out))));
     }
 
-    private static function absolute_url($href, $base) {
-        $href=trim(html_entity_decode((string)$href));
-        if(!$href||$href[0]==='#'||stripos($href,'javascript:')===0||stripos($href,'mailto:')===0)return '';
-        if(preg_match('~^https?://~i',$href))return GNF5_Utils::normalize_url($href);
-        $b=wp_parse_url($base);if(!$b||empty($b['host']))return '';
-        $scheme=$b['scheme']??'https';
-        if(strpos($href,'//')===0)return GNF5_Utils::normalize_url($scheme.':'.$href);
-        $origin=$scheme.'://'.$b['host'].(isset($b['port'])?':'.$b['port']:'');
-        if(strpos($href,'/')===0)return GNF5_Utils::normalize_url($origin.$href);
-        $dir=preg_replace('~/[^/]*$~','/',$b['path']??'/');
-        return GNF5_Utils::normalize_url($origin.$dir.$href);
+    public static function absolute_url($url, $base) {
+        if (preg_match('/^(?:data|javascript|mailto|tel):/i',trim((string)$url)) || substr(trim((string)$url),0,1)==='#') return '';
+        return GNF5_Utils::normalize_url(WP_Http::make_absolute_url(html_entity_decode(trim((string)$url),ENT_QUOTES|ENT_HTML5,'UTF-8'),$base));
+    }
+
+    public static function gdelt_items($cat_id, $force = false) {
+        $cs=GNF5_Utils::category_settings($cat_id);
+        if(empty($cs['gdelt_enabled']))return array();
+        $terms=array_filter(array_map('trim',preg_split('/[,\n]+/',(string)$cs['gdelt_keywords'])));
+        if(!$terms)return new WP_Error('gdelt_keywords','GDELT keywords are required for '.get_cat_name($cat_id).'.');
+        $quoted=array();foreach(array_slice($terms,0,12) as $term)$quoted[]='"'.str_replace(array('"','\\'),'',sanitize_text_field($term)).'"';
+        $query='('.implode(' OR ',$quoted).')';
+        if($cs['gdelt_language'])$query.=' sourcelang:'.$cs['gdelt_language'];
+        if($cs['gdelt_country'] && $cs['gdelt_country']!=='all')$query.=' sourcecountry:'.$cs['gdelt_country'];
+        $params=array('query'=>$query,'mode'=>'ArtList','format'=>'json','sort'=>'DateDesc','maxrecords'=>$cs['gdelt_results'],'timespan'=>$cs['gdelt_window']);
+        $key='gnf5_gdelt_'.md5($cat_id.'|'.wp_json_encode($params));
+        $cached=get_transient($key);
+        if(!$force && is_array($cached))return isset($cached['error'])?new WP_Error('gdelt_unavailable',$cached['error']):$cached['items'];
+        $url='https://api.gdeltproject.org/api/v2/doc/doc?'.http_build_query($params,'','&',PHP_QUERY_RFC3986);
+        $result=self::fetch($url,'json');
+        if(is_wp_error($result)){
+            set_transient($key,array('error'=>$result->get_error_message()),15*MINUTE_IN_SECONDS);
+            return $result;
+        }
+        $json=json_decode($result['body'],true);
+        if(!is_array($json) || !isset($json['articles']) || !is_array($json['articles']))return new WP_Error('gdelt_json','GDELT returned an invalid article list. RSS and Source URLs can still run.');
+        $items=array();
+        foreach(array_slice($json['articles'],0,$cs['gdelt_results']) as $row){
+            $url=GNF5_Utils::normalize_url($row['url']??'');if(!$url)continue;
+            $items[]=array('url'=>$url,'title'=>sanitize_text_field($row['title']??''),'published_at'=>sanitize_text_field($row['seendate']??''),
+                'domain'=>sanitize_text_field($row['domain']??''),'language'=>sanitize_text_field($row['language']??''),
+                'country'=>sanitize_text_field($row['sourcecountry']??''),'fallback_text'=>'','method'=>'GDELT');
+        }
+        set_transient($key,array('items'=>$items),$cs['gdelt_interval']*MINUTE_IN_SECONDS);
+        return $items;
     }
 
     private static function host_key($url) {

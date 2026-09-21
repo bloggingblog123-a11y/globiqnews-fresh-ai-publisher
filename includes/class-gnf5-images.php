@@ -21,25 +21,31 @@ class GNF5_Images {
         );
     }
 
-    public static function generate_for_post($article,$post_id,$cat_id=0) {
+    public static function generate_for_post($article,$post_id,$cat_id=0,$explicit=false) {
         $s=GNF5_Utils::settings();
-        if (empty($s['image_enabled'])) { return array(); }
+        if (!GNF5_Utils::images_enabled($cat_id)) { return array(); }
+        if (!$explicit && !GNF5_Publish::can_rewrite($post_id)) return new WP_Error('manual_edit','Article was edited manually. Image generation deferred to an explicit image action.');
 
         $stored=get_post_meta($post_id,'_gnf5_image_ids',true);
         $stored=is_array($stored)?$stored:array();
         $ids=array();
+        $thumb=get_post_thumbnail_id($post_id);
+        $manual_thumb=$thumb && !get_post_meta($thumb,'_gnf5_original_generated',true);
+        $manual_inline=self::has_manual_inline($post_id);
 
         for ($i=0;$i<2;$i++) {
+            if (($i===0 && $manual_thumb) || ($i===1 && $manual_inline)) continue;
+            if (!GNF5_Utils::images_enabled($cat_id)) return $ids;
             $existing=absint($stored[$i]??0);
             // Corrupt/old checkpoint data must never reuse one attachment as both required images.
             if($existing && in_array($existing,$ids,true)){$existing=0;}
-            if ($existing && GNF5_Utils::valid_attachment($existing)) {
+            if ($existing && get_post_meta($existing,'_gnf5_original_generated',true) && GNF5_Utils::valid_attachment($existing)) {
                 $ids[$i]=$existing;
                 continue;
             }
 
             $prompt=trim((string)($article['image_prompts'][$i]??''));
-            $prompt.="\nCreate a completely original article-specific editorial visual from text only. Landscape 16:9. Do not copy, recreate, trace, transform, imitate, or reference any source/existing image. No logos, watermark, signature, website branding, or readable text.";
+            $prompt.="\nCreate a completely original article-specific editorial visual from text only. Landscape 16:9. Do not copy, recreate, trace, transform, imitate, or reference any source/existing image. No logos, watermark, signature, website branding, or readable text. Use a clearly conceptual illustration for news about politics, health, crime, disasters or real people; never depict an invented event as a documentary photograph.";
             $custom=trim((string)($s['global_image_instructions']??''));
             if ($custom!=='') {
                 $prompt.="\nCUSTOM IMAGE INSTRUCTIONS (apply only when they do not conflict with originality/safety/no-source-image rules):\n".$custom;
@@ -85,10 +91,11 @@ class GNF5_Images {
         }
 
         ksort($ids);
-        return array_values($ids);
+        return $ids;
     }
 
     public static function generate_two($article) {
+        if (!GNF5_Utils::images_enabled()) return array();
         // Kept for compatibility with any existing V5.x call sites/tests.
         $ids=array();
         for($i=0;$i<2;$i++){
@@ -121,12 +128,14 @@ class GNF5_Images {
     }
 
     public static function generate_one_with_retry($title,$prompt,$cat_id=0) {
+        if (!GNF5_Utils::images_enabled($cat_id)) return new WP_Error('images_disabled','Image generation is OFF; no image request was made.');
+        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable; no image API request was made.');
         $s=GNF5_Utils::settings();
         $provider=(string)$s['image_provider'];
         $last=new WP_Error('image','Image generation failed.');
         for($attempt=1;$attempt<=3;$attempt++){
             if($cat_id)GNF5_Utils::touch_lock($cat_id);
-            $r=self::generate_one($title,$prompt);
+            $r=self::generate_one($title,$prompt,$cat_id);
             if(!is_wp_error($r)){
                 if($attempt>1)GNF5_Utils::log('Image generation recovered on attempt '.$attempt.'.','success');
                 return $r;
@@ -145,7 +154,10 @@ class GNF5_Images {
         return $last;
     }
 
-    public static function generate_one($title,$prompt) {
+    public static function generate_one($title,$prompt,$cat_id=0) {
+        if (!GNF5_Utils::images_enabled($cat_id)) return new WP_Error('images_disabled','Image generation is OFF; no image request was made.');
+        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable.');
+        $prompt=self::sanitize_text_only_prompt($prompt);
         $s=GNF5_Utils::settings();
         $provider=$s['image_provider'];
         if($provider==='openai')return self::openai($title,$prompt);
@@ -173,6 +185,7 @@ class GNF5_Images {
         if (is_wp_error($response)) { return $response; }
         $bytes = $response['bytes']; $mime = $response['mime'];
         $optimized = self::optimize_low_storage_webp($bytes);
+        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to optimized WebP.');
         if ($optimized) { $bytes = $optimized; $mime = 'image/webp'; }
         return self::save_bytes($bytes, $title, $mime);
     }
@@ -232,7 +245,7 @@ class GNF5_Images {
         if (!empty($s['webui_model'])) { $body['override_settings'] = array('sd_model_checkpoint'=>$s['webui_model']); }
         $headers = array('Content-Type'=>'application/json');
         if (!empty($s['webui_api_key'])) { $headers['Authorization'] = 'Bearer '.$s['webui_api_key']; }
-        $r = wp_remote_post($base.'/sdapi/v1/txt2img', array('timeout'=>240,'headers'=>$headers,'body'=>wp_json_encode($body)));
+        $r = wp_safe_remote_post($base.'/sdapi/v1/txt2img', array('timeout'=>240,'headers'=>$headers,'body'=>wp_json_encode($body)));
         if (is_wp_error($r)) { return $r; }
         $code = absint(wp_remote_retrieve_response_code($r)); $raw=(string)wp_remote_retrieve_body($r);
         if ($code < 200 || $code >= 300) { return new WP_Error('webui_http_'.$code,'Image server HTTP '.$code.': '.GNF5_Utils::safe_substr(wp_strip_all_tags($raw),0,300), array('http_code'=>$code)); }
@@ -242,6 +255,7 @@ class GNF5_Images {
         $bytes=base64_decode($b64,true); if(!$bytes){ return new WP_Error('webui_decode','Invalid image data returned by image server.'); }
         $mime=self::detect_mime($bytes); if(!$mime){return new WP_Error('webui_invalid_image','Image server returned non-image/unsupported data.');}
         $optimized=self::optimize_low_storage_webp($bytes);
+        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to optimized WebP.');
         if($optimized){$bytes=$optimized;$mime='image/webp';}
         return self::save_bytes($bytes,$title,$mime);
     }
@@ -323,6 +337,8 @@ class GNF5_Images {
     }
 
     private static function save_bytes($bytes, $title, $mime) {
+        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable.');
+
         if (!$bytes) { return new WP_Error('image_empty','Empty image data.'); }
         $detected=self::detect_mime($bytes);
         if(!$detected){return new WP_Error('image_invalid','Generated/downloaded data is not a valid supported image.');}
@@ -374,36 +390,54 @@ class GNF5_Images {
     }
 
     public static function insert_two_blocks($content, $ids, $alts) {
-        if (count($ids)!==2 || !function_exists('parse_blocks') || !function_exists('serialize_blocks')) { return $content; }
-        $blocks=parse_blocks($content);
-        $imgs=array();
-        for($i=0;$i<2;$i++){
-            $b=self::block_array($ids[$i],$alts[$i]??'');
-            if($b)$imgs[]=$b;
-        }
-        if(count($imgs)!==2)return $content;
-
-        $out=array();$h2_seen=0;$inserted=array(false,false);
-        foreach($blocks as $index=>$block){
-            if(!$inserted[0] && $index===0 && ($block['blockName']??'')!=='rank-math/toc-block'){
-                $out[]=$imgs[0];$inserted[0]=true;
-            }
-
+        // Slot zero is featured only. Slot one is the single generated inline image.
+        if (empty($ids[1]) || !function_exists('parse_blocks') || !GNF5_Utils::valid_attachment($ids[1])) return $content;
+        if (strpos($content,'wp-image-'.absint($ids[1]))!==false) return $content;
+        $image=self::block_array($ids[1],get_post_meta($ids[1],'_wp_attachment_image_alt',true));if(!$image)return $content;
+        $blocks=parse_blocks($content);$out=array();$inserted=false;$paragraphs=0;
+        foreach($blocks as $block){
             $out[]=$block;
-
-            if(($block['blockName']??'')==='rank-math/toc-block' && !$inserted[0]){
-                $out[]=$imgs[0];$inserted[0]=true;
-                continue;
-            }
-
-            if(($block['blockName']??'')==='core/heading' && absint($block['attrs']['level']??2)===2){
-                $h2_seen++;
-                if($h2_seen===2 && !$inserted[1]){$out[]=$imgs[1];$inserted[1]=true;}
-            }
+            if(($block['blockName']??'')==='core/paragraph')$paragraphs++;
+            if(!$inserted && $paragraphs===2){$out[]=$image;$inserted=true;}
         }
-
-        if(!$inserted[0])$out=array_merge(array($imgs[0]),$out);
-        if(!$inserted[1])$out[]=$imgs[1];
+        if(!$inserted)$out[]=$image;
         return serialize_blocks($out);
+    }
+
+    public static function has_manual_inline($post_id) {
+        $content=(string)get_post_field('post_content',$post_id);
+        preg_match_all('/<img\b[^>]*>/i',$content,$images);
+        foreach($images[0] as $image){
+            if(!preg_match('/wp-image-(\d+)/',$image,$id) || !get_post_meta((int)$id[1],'_gnf5_original_generated',true))return true;
+        }
+        return false;
+    }
+
+    public static function remove_generated($post_id) {
+        $ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);$content=get_post_field('post_content',$post_id);
+        $blocks=parse_blocks($content);$remove=array();
+        foreach($ids as $id)if(get_post_meta($id,'_gnf5_original_generated',true) && (int)get_post_field('post_parent',$id)===(int)$post_id)$remove[]=absint($id);
+        $filter=function($blocks)use(&$filter,$remove){
+            $out=array();foreach($blocks as $block){
+                if(($block['blockName']??'')==='core/image' && in_array((int)($block['attrs']['id']??0),$remove,true))continue;
+                if(!empty($block['innerBlocks']))$block['innerBlocks']=$filter($block['innerBlocks']);
+                $out[]=$block;
+            }return $out;
+        };
+        $saved=GNF5_Publish::save(array('ID'=>$post_id,'post_content'=>serialize_blocks($filter($blocks))));
+        if(is_wp_error($saved))return $saved;
+        foreach($remove as $id){if(get_post_thumbnail_id($post_id)===$id)delete_post_thumbnail($post_id);wp_delete_attachment($id,true);}
+        delete_post_meta($post_id,'_gnf5_image_ids');
+        return true;
+    }
+    public static function manual_image_markup($post_id) {
+        $content=(string)get_post_field('post_content',$post_id);$out='';$seen=array();
+        preg_match_all('/<img\b[^>]*>/i',$content,$matches);
+        foreach($matches[0] as $tag){
+            if(preg_match('/wp-image-(\d+)/',$tag,$id) && get_post_meta((int)$id[1],'_gnf5_original_generated',true))continue;
+            $hash=md5($tag);if(isset($seen[$hash]))continue;$seen[$hash]=true;
+            $out.="\n<!-- wp:html -->\n".wp_kses_post('<figure>'.$tag.'</figure>')."\n<!-- /wp:html -->\n";
+        }
+        return $out;
     }
 }

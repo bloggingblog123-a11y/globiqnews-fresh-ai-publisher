@@ -1,0 +1,38 @@
+{
+  "version": "6.0.0",
+  "baseline": "5.31.0 candidate",
+  "modified": [
+    "CHANGELOG.txt",
+    "README.md",
+    "RELEASE-NOTES.md",
+    "assets/admin.js",
+    "globiqnews-fresh-ai-publisher.php",
+    "includes/class-gnf5-admin.php",
+    "includes/class-gnf5-images.php",
+    "includes/class-gnf5-publish.php",
+    "includes/class-gnf5-rankmath.php",
+    "includes/class-gnf5-runner.php",
+    "includes/class-gnf5-seo.php",
+    "includes/class-gnf5-sources.php",
+    "includes/class-gnf5-utils.php",
+    "includes/class-gnf5-writer.php",
+    "readme.txt",
+    "scoring-service/README.md",
+    "tools/tests/README.md"
+  ],
+  "added": [
+    "CHANGE-INVENTORY-6.0.0.json",
+    "SPEC-COVERAGE-6.0.0.md",
+    "TEST-REPORT-6.0.0.md",
+    "assets/report.js",
+    "includes/class-gnf5-quality.php",
+    "includes/class-gnf5-research.php",
+    "includes/class-gnf5-topics.php",
+    "tools/tests/bootstrap600.php",
+    "tools/tests/test-master-foundation.php",
+    "tools/tests/test-master-media-queue.php",
+    "tools/tests/test-master-pipeline.php",
+    "tools/tests/test-master-security.php"
+  ],
+  "removed": []
+}

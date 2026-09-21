@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: globiqnews-rankmath-scorer
+    runtime: node
+    plan: free
+    buildCommand: node scoring-service/build.cjs
+    startCommand: node scoring-service/server.cjs
+    healthCheckPath: /health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GNF5_SCORER_SECRET
+        generateValue: true

@@ -11,10 +11,15 @@ class GNF5_Admin {
     }
 
     public static function settings_updated($old,$new) {
-        GNF5_Utils::reschedule_all();
+        foreach(get_categories(array('hide_empty'=>false)) as $cat){
+            $id=(int)$cat->term_id;$before=GNF5_Utils::category_settings($id,is_array($old)?$old:array());$after=GNF5_Utils::category_settings($id,is_array($new)?$new:array());
+            if($before['enabled']===$after['enabled'] && $before['interval']===$after['interval'])continue;
+            wp_clear_scheduled_hook(GNF5_CRON_HOOK,array($id));
+            if(!empty($after['enabled']))wp_schedule_event(time()+90,$after['interval'],GNF5_CRON_HOOK,array($id));
+            else {wp_clear_scheduled_hook(GNF5_CRON_CONTINUE_HOOK,array($id));GNF5_Utils::end_cron_chain($id);}
+        }
         GNF5_Utils::ensure_recovery_schedule();
-        GNF5_Publish::check_saved_scores(20);
-        GNF5_Utils::log('Fresh V5 settings saved; category and recovery schedules rebuilt.','info');
+        GNF5_Utils::log('Settings saved. Existing category batches and unchanged schedules were preserved.','info');
     }
 
     public static function enqueue($hook) {
@@ -40,7 +45,7 @@ class GNF5_Admin {
 
     public static function page() {
         if(!current_user_can('manage_options'))return;
-        GNF5_Publish::check_saved_scores(10);
+        if(isset($_GET['report'])) { $post=get_post(absint($_GET['report'])); if($post && get_post_meta($post->ID,'_gnf5_generated_by',true)==='fresh-v5'){ echo '<div class="wrap"><h1>Article research and quality report</h1>';self::report_box($post);echo '</div>';return;} }
         $s=GNF5_Utils::settings();$cats=get_categories(array('hide_empty'=>false));
         $all_users=get_users(array('orderby'=>'display_name','order'=>'ASC'));
         $users=array();
@@ -50,9 +55,9 @@ class GNF5_Admin {
         ?>
         <div class="wrap gnf5-wrap">
             <?php settings_errors(); ?>
-            <h1>GlobiqNews Fresh AI Publisher <span class="gnf5-badge">V<?php echo esc_html(GNF5_VERSION); ?> Rank Math 80+ Auto Publish</span></h1>
+            <h1>GlobiqNews Fresh AI Publisher <span class="gnf5-badge">V<?php echo esc_html(GNF5_VERSION); ?> Research → Original Draft</span></h1>
             <div class="notice notice-success inline"><p><strong>Upgrade-safe:</strong> V<?php echo esc_html(GNF5_VERSION); ?> keeps your V5 settings, API keys, category sources, custom instructions, recovery data and schedules. RSS, Source URLs and Trusted External Links are checked independently.</p></div>
-            <p class="gnf5-flow">Category RSS / Source URL / Manual URL → safe extraction → Gemini + instructions → Draft checkpoint → Rank Math repair → 2 low-storage original images → Rank Math score 80+ → Auto Publish or Draft/Pending</p>
+            <p class="gnf5-flow">GDELT / RSS / Source URL / Manual URL → Research → Fact sheet → Independent article → Quality checks → Optional images → Rank Math → Draft → Human review</p>
             <div class="gnf5-diagnostics">
                 <span>PHP <?php echo esc_html(PHP_VERSION); ?></span>
                 <span>DOM <?php echo class_exists('DOMDocument')?'OK':'MISSING'; ?></span>
@@ -73,29 +78,41 @@ class GNF5_Admin {
                 <section class="gnf5-card">
                     <h2>1. Gemini Article Writer</h2>
                     <div class="gnf5-grid3">
-                        <label>Gemini API Key<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[gemini_api_key]" value="<?php echo esc_attr($s['gemini_api_key']); ?>" autocomplete="off"></label>
+                        <label>Gemini API Key<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[gemini_api_key]" value="" placeholder="Leave blank to keep the saved key" autocomplete="new-password" autocomplete="off"></label>
                         <label>Gemini Text Model<input type="text" name="<?php echo esc_attr(GNF5_OPTION); ?>[gemini_model]" value="<?php echo esc_attr($s['gemini_model']); ?>"></label>
                         <label>Optional Backup Gemini Model<input type="text" name="<?php echo esc_attr(GNF5_OPTION); ?>[gemini_backup_model]" value="<?php echo esc_attr($s['gemini_backup_model']); ?>"><small>Used only after the primary model fails its automatic retries.</small></label>
                     </div>
                     <p><button type="submit" class="button button-primary">Save Settings</button> <button type="button" class="button gnf5-test-gemini">Test Gemini Connection</button></p>
                     <p class="description">Saves your Gemini API key, text model, backup model and all other settings on this page. Save changes before testing the connection.</p>
-                    <div class="gnf5-rule"><strong>Fault tolerance:</strong> Gemini requests retry up to 3 times. If you enter a backup model, it is tried only after the primary model still fails.</div>
-                    <div class="gnf5-rule"><strong>Locked article length:</strong> 1000–1200 words, target about 1100.</div>
+                    <div class="gnf5-rule"><strong>Fault tolerance:</strong> Each Gemini stage makes at most 3 requests total, including an optional backup model.</div>
+                    <div class="gnf5-rule"><strong>Preferred article length:</strong> 1000–1200 words when supported by research. Shorter useful articles are allowed; accuracy comes first.</div>
                 </section>
 
                 <section class="gnf5-card">
-                    <h2>2. Auto Publish + V5.9 Automatic Recovery</h2>
+                    <h2>2. Draft-only workflow and automatic recovery</h2>
+                    <div class="gnf5-rule"><strong>Every generated article remains Draft, even at Rank Math 100.</strong> Review and publish manually from the WordPress editor. Previous auto-publish preferences are archived and no longer used.</div>
                     <div class="gnf5-grid2">
-                        <label class="gnf5-inline"><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_publish_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_publish_enabled]" value="1" <?php checked(!empty($s['auto_publish_enabled'])); ?>> <strong>Auto Publish when Rank Math SEO score is 80 or more</strong></label>
-                        <label>When Auto Publish is OFF<select name="<?php echo esc_attr(GNF5_OPTION); ?>[validated_success_status]"><option value="draft" <?php selected($s['validated_success_status'],'draft'); ?>>Keep articles as Draft</option><option value="pending" <?php selected($s['validated_success_status'],'pending'); ?>>Send articles to Pending Review</option></select></label>
-                        <label class="gnf5-inline"><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_publish_recovered]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_publish_recovered]" value="1" <?php checked(!empty($s['auto_publish_recovered'])); ?>> Auto-publish recovered drafts when Rank Math SEO score reaches 80+</label>
-                        <label class="gnf5-inline"><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_enabled]" value="1" <?php checked(!empty($s['auto_recovery_enabled'])); ?>> Automatic failed-draft recovery</label>
-                        <label>Maximum Automatic Recovery Attempts<input type="number" min="1" max="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_max_attempts]" value="<?php echo esc_attr($s['auto_recovery_max_attempts']); ?>"></label>
+                        <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_enabled]" value="1" <?php checked($s['auto_recovery_enabled']); ?>> Recover incomplete drafts automatically</label>
+                        <label>Maximum recovery attempts<input type="number" min="1" max="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_recovery_max_attempts]" value="<?php echo esc_attr($s['auto_recovery_max_attempts']); ?>"></label>
+                        <label>Added Value Score target<input type="number" min="0" max="100" name="<?php echo esc_attr(GNF5_OPTION); ?>[added_value_target]" value="<?php echo esc_attr($s['added_value_target']); ?>"></label>
+                        <label>Originality regeneration attempts<input type="number" min="0" max="2" name="<?php echo esc_attr(GNF5_OPTION); ?>[originality_retries]" value="<?php echo esc_attr($s['originality_retries']); ?>"></label>
+                        <label>Topic history retention (days)<input type="number" min="7" max="365" name="<?php echo esc_attr(GNF5_OPTION); ?>[history_days]" value="<?php echo esc_attr($s['history_days']); ?>"></label>
+                        <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[debug_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[debug_enabled]" value="1" <?php checked($s['debug_enabled']); ?>> Enable diagnostic logging (secrets remain redacted)</label>
                     </div>
-                    <p><button type="button" class="button button-primary gnf5-check-publish-scores">Check &amp; Publish 80+ Drafts Now</button></p>
-                    <p class="description">Save settings first. Checks up to 50 existing plugin drafts with a saved score of 80+ and publishes eligible articles. No article rewriting or image generation. See Draft Auto Publish Status below for reasons a post stays in Draft.</p>
-                    <div class="gnf5-rule"><strong>Publish rule:</strong> Completed plugin drafts qualify with an actual saved Rank Math SEO score of at least 80/100. Strict validation checks and private score-tracking metadata do not block publishing. A missing or lower score keeps the article as Draft. Draft/Pending behavior above applies when Auto Publish is OFF.</div>
-                    <div class="gnf5-rule"><strong>Score calculation:</strong> Rank Math calculates its score in the editor. Open and save a waiting draft with Rank Math active. This plugin watches that saved score and publishes automatically when the score reaches 80 or more; it does not invent scores or run Rank Math's JavaScript analyzer in WP-Cron. Waiting drafts are also checked by WP-Cron approximately every 15 minutes. After editing an article, save a fresh Rank Math score for the updated content.</div>
+                    <p><strong>Preferred Rank Math target: 80 / 100 — optimization only.</strong></p>
+                    <div class="gnf5-grid2">
+                        <label>Where to calculate SEO scores<select name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_analyzer_mode]"><option value="local" <?php selected($s['seo_analyzer_mode'],'local'); ?>>On this server (requires Node.js)</option><option value="remote" <?php selected($s['seo_analyzer_mode'],'remote'); ?>>My HTTPS scoring service (for shared hosting)</option></select></label>
+                        <label>Scoring service address<input type="url" name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_service_url]" value="<?php echo esc_attr($s['seo_service_url']); ?>" placeholder="https://your-scorer.onrender.com"></label>
+                        <label>Scoring service secret<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_service_key]" value="" autocomplete="new-password" placeholder="<?php echo !empty($s['seo_service_key'])?'Saved — leave blank to keep':'Paste the secret from your service'; ?>"><small>Use the same GNF5_SCORER_SECRET set on your scoring service. Saved secrets are not shown here.</small></label>
+                        <label class="gnf5-inline"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_service_clear_key]" value="1"> Remove saved scoring service secret</label>
+                    </div>
+                    <p><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_service_consent]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[seo_service_consent]" value="1" <?php checked(!empty($s['seo_service_consent'])); ?>> Allow sending my final article text, SEO metadata, links, image URLs and alt text to this service for scoring.</label></p>
+                    <p class="description">The service runs the verified Rank Math analyzer. Articles always remain Draft for manual publishing. Writer API keys and WordPress passwords are not sent. A sleeping or unavailable service leaves articles as Draft and retries scoring.</p>
+                    <p><button type="submit" class="button button-primary">Save Settings</button></p>
+                    <p><button type="button" class="button button-primary gnf5-check-publish-scores">Recheck Draft SEO Scores</button></p>
+                    <p class="description">Checks up to 5 completed drafts. Up to 3 natural SEO optimization attempts may improve unchanged generated articles. Human edits and manual images are protected. No score triggers publishing.</p>
+                    <div class="gnf5-rule"><strong>Background scoring:</strong> Runs Rank Math Free 1.0.278's verified analyzer after article text, metadata, links and images are saved. No editor needs to stay open. Shared hosting can use your HTTPS scoring service without Node.js or proc_open on WordPress. Local mode requires both. Failed analysis retries after about 5 minutes, then 30 minutes, with a maximum of 3 attempts. WordPress scheduled tasks depend on site traffic or your host's cron service. Use the button above to retry after fixing a connection problem.</div>
+                    <div class="gnf5-rule"><strong>Analyzer compatibility:</strong> <?php $seo_error=GNF5_RankMath::compatibility_error(); echo esc_html($seo_error ?: 'Required files and runtime found. Run analysis to verify execution.'); ?></div>
                     <div class="gnf5-rule"><strong>V5.9 recovery retained:</strong> failed image/post-processing drafts automatically retry at approximately 15 minutes, then 1 hour, then 6 hours. Successful images and article text are checkpointed and reused. Only exhausted failures appear in Failed Draft Recovery.</div>
                 </section>
 
@@ -106,52 +123,44 @@ class GNF5_Admin {
                         <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[toc_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[toc_enabled]" value="1" <?php checked($s['toc_enabled']); ?>> Add real Rank Math Table of Contents block</label>
                         <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[internal_links]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[internal_links]" value="1" <?php checked($s['internal_links']); ?>> Add real same-category internal links when available</label>
                     </div>
-                    <div class="gnf5-grid2">
-                        <div class="gnf5-rule"><strong>Keyword:</strong> exact focus keyword at beginning of SEO title, in WordPress title, meta, slug, first 10%, H2/H3, body, conclusion and at least one image ALT; density 1.0%–1.5% using Rank Math-style exact phrase occurrences.</div>
-                        <div class="gnf5-rule"><strong>SEO title:</strong> unique vs existing posts, ≤60 characters, number/year, natural power word, and one truthful positive OR negative sentiment word.</div>
-                        <div class="gnf5-rule"><strong>Structure:</strong> 1000–1200 words, no body H1, multiple H2/H3, short paragraphs, list, Rank Math TOC, exactly 3 FAQ questions, 5–8 tags and valid Gutenberg blocks.</div>
-                        <div class="gnf5-rule"><strong>Media & links:</strong> exactly 2 original images; Image 1 featured + inline, Image 2 inline; unique ALT; valid local image files; internal links when available; supplied external links must be normal DoFollow and not broken.</div>
-                        <div class="gnf5-rule"><strong>Metadata:</strong> final Rank Math title/description/focus keyword must match the final article; meta description 120–160 characters (writer targets 140–155); slug under 75 characters; Article schema recommendation stored.</div>
-                        <div class="gnf5-rule"><strong>Safety:</strong> source URL is never shown in article content, source images are never copied/used, and failed article/image processing remains Draft for recovery. SEO writing targets are not strict publishing checks.</div>
-                    </div>
-                    <p class="description"><strong>Note:</strong> Rank Math Content AI is a separate Rank Math service. The rules above guide article generation. Auto Publish uses the saved Rank Math SEO score, not this checklist or a Content AI score.</p>
+                    <div class="gnf5-rule">Use accurate titles, natural keywords, relevant headings and useful links. There is no mandatory power word, sentiment, year, FAQ, table or keyword-density target. Rank Math remains responsible for canonical URLs, schema and sitemaps. Missing scores are shown as not checked.</div>
                 </section>
 
                 <section class="gnf5-card">
-                    <h2>4. Original Image System — 2 Images Total</h2>
-                    <p><strong>Image 1 = Featured + appears inline. Image 2 = separate inline image.</strong> Source/RSS images are never downloaded, copied, traced, transformed or sent to the image generator.</p>
-                    <div class="gnf5-checks"><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[image_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[image_enabled]" value="1" <?php checked($s['image_enabled']); ?>> Generate exactly 2 original images per article</label></div>
+                    <h2>4. Optional original images or your own images</h2>
+                    <p><strong>Maximum 1 featured image + 1 separate inline image.</strong> Source/RSS images are never downloaded, copied, traced, transformed or sent to the image generator.</p>
+                    <div class="gnf5-checks"><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[image_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[image_enabled]" value="1" <?php checked($s['image_enabled']); ?>> Generate original images (OFF by default on new installs)</label></div>
                     <div class="gnf5-grid3">
                         <label>Image Provider<select name="<?php echo esc_attr(GNF5_OPTION); ?>[image_provider]"><option value="openai" <?php selected($s['image_provider'],'openai'); ?>>OpenAI Image API</option><option value="webui" <?php selected($s['image_provider'],'webui'); ?>>Self-hosted SD / FLUX WebUI</option><option value="builtin" <?php selected($s['image_provider'],'builtin'); ?>>Built-in original graphics</option></select></label>
-                        <label>OpenAI API Key<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_api_key]" value="<?php echo esc_attr($s['openai_api_key']); ?>" autocomplete="off"></label>
+                        <label>OpenAI API Key<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_api_key]" value="" placeholder="Leave blank to keep the saved key" autocomplete="new-password" autocomplete="off"></label>
                         <label>OpenAI Image Model<input type="text" name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_model]" value="<?php echo esc_attr($s['openai_model']); ?>"></label>
                         <label>Image Quality<select name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_quality]"><?php foreach(array('low','medium','high','xhigh','max','auto') as $q): ?><option value="<?php echo esc_attr($q); ?>" <?php selected($s['openai_quality'],$q); ?>><?php echo esc_html(ucfirst($q)); ?></option><?php endforeach; ?></select></label>
                         <label>Image Size<select name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_size]"><option value="1536x1024" <?php selected($s['openai_size'],'1536x1024'); ?>>1536×1024 landscape</option><option value="1024x1024" <?php selected($s['openai_size'],'1024x1024'); ?>>1024×1024 square</option><option value="1024x1536" <?php selected($s['openai_size'],'1024x1536'); ?>>1024×1536 portrait</option></select></label>
                         <label>Low-Storage WebP Quality<input type="number" min="50" max="90" name="<?php echo esc_attr(GNF5_OPTION); ?>[webp_quality]" value="<?php echo esc_attr($s['webp_quality']); ?>"></label>
                     </div>
                     <p class="description">Every successful generated image is optimized locally to 1200×675 WebP when supported. If Image 1 succeeds but Image 2 fails, Image 1 is checkpointed and Retry generates only the missing image.</p>
-                    <details><summary>Self-hosted SD / FLUX settings</summary><div class="gnf5-grid3 gnf5-details"><label>WebUI Base URL<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_endpoint]" value="<?php echo esc_attr($s['webui_endpoint']); ?>"></label><label>Optional Bearer Token<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_api_key]" value="<?php echo esc_attr($s['webui_api_key']); ?>"></label><label>Optional Checkpoint<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_model]" value="<?php echo esc_attr($s['webui_model']); ?>"></label></div></details>
+                    <details><summary>Self-hosted SD / FLUX settings</summary><div class="gnf5-grid3 gnf5-details"><label>WebUI Base URL<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_endpoint]" value="<?php echo esc_attr($s['webui_endpoint']); ?>"></label><label>Optional Bearer Token<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_api_key]" value="" placeholder="Leave blank to keep the saved key" autocomplete="new-password"></label><label>Optional Checkpoint<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_model]" value="<?php echo esc_attr($s['webui_model']); ?>"></label></div></details>
                     <p><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[builtin_fallback]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[builtin_fallback]" value="1" <?php checked($s['builtin_fallback']); ?>> Use built-in original graphics if the primary image provider still fails</label></p>
                     <p><button type="button" class="button gnf5-test-image">Test Image Generator</button></p>
                 </section>
 
                 <section class="gnf5-card">
                     <h2>5. Custom Instructions — Change Future Articles Without Editing Code</h2>
-                    <p>Save new instructions here and the <strong>next generated article automatically uses them</strong>. These instructions cannot override locked factual, 1000–1200 word, 2-image, category-isolation, source-image, or SEO writing targets.</p>
+                    <p>Save new instructions here and the <strong>next generated article automatically uses them</strong>. These preferences cannot override protected factual, originality, Draft-only, category-isolation or image-mode rules.</p>
                     <div class="gnf5-grid3">
                         <label>Global Article Instructions<textarea rows="7" name="<?php echo esc_attr(GNF5_OPTION); ?>[global_article_instructions]" placeholder="Example: Use simple professional English. Explain technical terms clearly. Avoid clickbait."><?php echo esc_textarea($s['global_article_instructions']); ?></textarea></label>
                         <label>Global SEO Instructions<textarea rows="7" name="<?php echo esc_attr(GNF5_OPTION); ?>[global_seo_instructions]" placeholder="Example: Prefer concise headlines and natural subheadings."><?php echo esc_textarea($s['global_seo_instructions']); ?></textarea></label>
                         <label>Global Image Instructions<textarea rows="7" name="<?php echo esc_attr(GNF5_OPTION); ?>[global_image_instructions]" placeholder="Example: Clean editorial illustration, realistic lighting, no text."><?php echo esc_textarea($s['global_image_instructions']); ?></textarea></label>
                     </div>
-                    <div class="gnf5-rule"><strong>Instruction priority:</strong> locked plugin rules → your global instructions → category-specific instructions → source facts.</div>
+                    <div class="gnf5-rule"><strong>Instruction priority:</strong> protected factual and originality rules → your global and category preferences. Source text is research data only.</div>
                 </section>
 
                 <section class="gnf5-card">
                     <h2>6. Category-wise Sources, Author, Post Limits, Timing & Instructions</h2>
-                    <p>Every category remains isolated. RSS is optional. <strong>Source URLs auto-detect category pages, direct article URLs, and feed URLs.</strong> Category-page discovery ignores navigation/sidebar links and strongly prefers article URLs that match that category path.</p>
+                    <p>Every category remains isolated. GDELT, RSS and Source URLs are independently optional. Manual URLs work without automatic sources. <strong>Source URLs auto-detect category pages, direct article URLs, and feed URLs.</strong> Category-page discovery ignores navigation/sidebar links and strongly prefers article URLs that match that category path.</p>
                     <details><summary>Advanced source safety & recovery</summary><div class="gnf5-grid2 gnf5-details">
-<label>Blocked Source Retry Delay (hours)<input type="number" min="1" max="72" name="<?php echo esc_attr(GNF5_OPTION); ?>[blocked_retry_hours]" value="<?php echo esc_attr($s['blocked_retry_hours']); ?>"></label>
-<div class="gnf5-rule">Default 6 hours. 401/403/429/CAPTCHA sources are skipped and retried later; the plugin does not bypass anti-bot systems.</div>
+<label>Blocked Source Retry Delay (hours)<input type="number" value="6" readonly></label>
+<div class="gnf5-rule">Fixed 6 hours. Blocked, login, paywall and connection-failure sources are skipped and retried later; the plugin does not bypass anti-bot systems.</div>
 </div></details>
 
                     <div class="gnf5-category-list">
@@ -163,23 +172,26 @@ class GNF5_Admin {
                             </div>
                             <div class="gnf5-grid3">
                                 <label class="gnf5-inline"><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][enabled]" value="1" <?php checked($cs['enabled']); ?>> Enable automatic importing</label>
-                                <label>Target Posts Per Run<input type="number" min="1" max="10" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][post_limit]" value="<?php echo esc_attr($cs['post_limit']); ?>"></label>
+                                <label>Successful New Drafts Per Run<input type="number" min="1" max="10" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][post_limit]" value="<?php echo esc_attr($cs['post_limit']); ?>"></label>
                                 <label>Automatic Timing<select name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][interval]"><?php self::interval_options($cs['interval']); ?></select></label>
-                                <label>Author for this Category<select name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][author_id]"><?php foreach($users as $u): ?><option value="<?php echo absint($u->ID); ?>" <?php selected($cs['author_id'],$u->ID); ?>><?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_login); ?>)</option><?php endforeach; ?></select></label>
+                                <label>Author for this Category<select name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][author_id]"><option value="0">Select an author (required)</option><?php foreach($users as $u): ?><option value="<?php echo absint($u->ID); ?>" <?php selected($cs['author_id'],$u->ID); ?>><?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_login); ?>)</option><?php endforeach; ?></select></label>
                             </div>
+                            <?php self::category_fields($cat,$cs); ?>
                             <div class="gnf5-grid3">
                                 <label><?php echo esc_html($cat->name); ?> — RSS / Atom Feeds<small>Optional · one feed URL per line · WordPress parser + raw XML fallback</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][rss]"><?php echo esc_textarea($cs['rss']); ?></textarea></label>
                                 <label><?php echo esc_html($cat->name); ?> — Source URLs<small>One URL per line · category/listing page OR direct article URL; mode is detected automatically</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][urls]"><?php echo esc_textarea($cs['urls']); ?></textarea></label>
-                                <label><?php echo esc_html($cat->name); ?> — Trusted External DoFollow Links<small>Recommended for the normal Rank Math external-link + followed-link tests · category-specific · only reachable/restricted-but-public normal DoFollow links are inserted · source article URL is never inserted · Save this category before using Test.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][external_links]"><?php echo esc_textarea($cs['external_links']); ?></textarea></label>
+                                <label><?php echo esc_html($cat->name); ?> — Trusted External DoFollow Links<small>Optional primary/research references for this category. Links are checked independently; inaccessible links are not treated as verified. Research sources are stored privately.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][external_links]"><?php echo esc_textarea($cs['external_links']); ?></textarea></label>
                             </div>
                             <label><?php echo esc_html($cat->name); ?> — Category Custom Instructions<small>Combined with Global Instructions only for this category.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][instructions]" placeholder="Example: Use a match-report style for Sports, but keep all locked factual and SEO rules."><?php echo esc_textarea($cs['instructions']); ?></textarea></label>
                             <input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][_row_complete]" value="1">
-                            <?php if(GNF5_Utils::is_locked($cat->term_id)): ?><p class="gnf5-lock">This category has an import lock. <button type="button" class="button-link gnf5-clear-lock" data-cat="<?php echo absint($cat->term_id); ?>">Clear only if genuinely stuck</button></p><?php endif; ?>
+                            <div class="gnf5-grid2"><label>Manual article for <?php echo esc_html($cat->name); ?><input type="url" class="gnf6-category-url" placeholder="https://example.com/article"></label><div class="gnf5-button-cell"><button type="button" class="button gnf6-category-manual" data-cat="<?php echo absint($cat->term_id); ?>">Research &amp; Create Draft</button></div></div>
+                            <?php if(GNF5_Utils::stale_lock($cat->term_id)): ?><p class="gnf5-lock">This category has a stale import lock. <button type="button" class="button-link gnf5-clear-lock" data-cat="<?php echo absint($cat->term_id); ?>">Clear only if genuinely stuck</button></p><?php endif; ?>
                         </div>
                     <?php endforeach; ?>
                     </div>
                 </section>
 
+                <details class="gnf5-card"><summary>Protected writing instruction</summary><p><?php echo esc_html(GNF5_Writer::protected_instruction()); ?></p></details>
                 <?php submit_button('Save All V'.GNF5_VERSION.' Settings'); ?>
             </form>
 
@@ -190,19 +202,22 @@ class GNF5_Admin {
                 <div class="gnf5-grid3">
                     <label>Manual Article URL<input type="url" id="gnf5-manual-url" placeholder="https://example.com/article"></label>
                     <label>WordPress Category<select id="gnf5-manual-cat"><?php foreach($cats as $cat): ?><option value="<?php echo absint($cat->term_id); ?>"><?php echo esc_html($cat->name); ?></option><?php endforeach; ?></select></label>
-                    <div class="gnf5-button-cell"><button type="button" class="button button-primary gnf5-run-manual">Rewrite This Article Now</button><button type="button" class="button gnf5-test-source">Test Source Extraction Only</button></div>
+                    <div class="gnf5-button-cell"><button type="button" class="button button-primary gnf5-run-manual">Research &amp; Create Draft</button><button type="button" class="button gnf5-test-source">Test Source Extraction Only</button></div>
                 </div>
             </section>
 
             <?php $score_waiting=GNF5_Publish::waiting_posts(50); if($score_waiting): ?>
             <section class="gnf5-card">
-                <h2>Draft Auto Publish Status</h2>
-                <p>This is the score saved in WordPress, which may differ from an unsaved score shown in the editor. Auto Publish must be enabled; recovered drafts also require the recovered-draft publishing option.</p>
+                <h2>Draft review and SEO status</h2>
+                <p>The saved Rank Math score is shown below. Every article requires human review and manual publishing; no score triggers publication.</p>
                 <?php foreach($score_waiting as $p): $score=GNF5_Publish::score($p->ID); ?>
                     <p><strong>#<?php echo absint($p->ID); ?> — <?php echo esc_html(get_the_title($p)); ?></strong>
                     · Rank Math: <?php echo $score===null ? 'Not calculated' : esc_html($score.'/100'); ?>
-                    <a class="button" href="<?php echo esc_url(get_edit_post_link($p->ID)); ?>">Open Draft to Calculate Score</a><br>
-                    <small><?php $reason=GNF5_Publish::blocked_reason($p->ID); echo esc_html($reason?:((string)get_post_meta($p->ID,'_gnf5_publish_wait_reason',true)?:'Ready: click Check & Publish 80+ Drafts Now.')); ?></small></p>
+                    · <?php echo esc_html(get_post_meta($p->ID,'_gnf5_seo_status',true) ?: 'SEO SCORE PENDING'); ?>
+                    · Attempts: <?php echo absint(get_post_meta($p->ID,'_gnf5_seo_attempts',true)); ?>/3
+                    <a class="button" href="<?php echo esc_url(get_edit_post_link($p->ID)); ?>">Edit Draft</a> <a class="button" href="<?php echo esc_url(admin_url("admin.php?page=globiqnews-fresh-ai-publisher&report=".$p->ID)); ?>">View Research / Quality</a><br>
+                    <small><?php echo esc_html(get_post_meta($p->ID,'_gnf5_seo_error',true)); ?></small><br>
+                    <small><?php $reason=GNF5_Publish::blocked_reason($p->ID); echo esc_html($reason?:((string)get_post_meta($p->ID,'_gnf5_publish_wait_reason',true)?:'Draft ready for human review.')); ?></small></p>
                 <?php endforeach; ?>
             </section>
             <?php endif; ?>
@@ -240,9 +255,11 @@ class GNF5_Admin {
             </section>
             <?php endif; ?>
 
+            <?php self::transparency(); ?>
             <section class="gnf5-card">
                 <div class="gnf5-category-head"><h2><?php echo $failed ? '9' : '8'; ?>. Live Log</h2><button type="button" class="button gnf5-clear-log">Clear Fresh V5 Log</button></div>
-                <div id="gnf5-log" class="gnf5-log"><?php if(!$logs): ?>No Fresh V5 log entries yet.<?php else: foreach($logs as $row): $catname=$row['cat']?get_cat_name($row['cat']):''; ?><div><span class="gnf5-time">[<?php echo esc_html($row['time']); ?>]</span> <strong><?php echo esc_html(strtoupper($row['type'])); ?></strong><?php echo $catname?' ['.esc_html($catname).']':''; ?> — <?php echo esc_html($row['message']); ?></div><?php endforeach; endif; ?></div>
+                <p><label>Filter <select id="gnf5-log-filter"><option value="">All</option><?php foreach(array("success","failure","blocked","draft","originality","fact","seo_warning","image_warning","warning") as $filter): ?><option value="<?php echo esc_attr($filter); ?>"><?php echo esc_html(ucwords(str_replace("_"," ",$filter))); ?></option><?php endforeach; ?></select></label> <a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url("admin-post.php?action=gnf5_export_log"),"gnf5_export_log")); ?>">Export log</a></p>
+                <div id="gnf5-log" class="gnf5-log"><?php if(!$logs): ?>No Fresh V5 log entries yet.<?php else: foreach($logs as $row): $catname=$row['cat']?get_cat_name($row['cat']):''; ?><div data-log-type="<?php echo esc_attr($row['type']); ?>"><span class="gnf5-time">[<?php echo esc_html($row['time']); ?>]</span> <strong><?php echo esc_html(strtoupper($row['type'])); ?></strong><?php echo $catname?' ['.esc_html($catname).']':''; ?> — <?php echo esc_html($row['message']); ?></div><?php endforeach; endif; ?></div>
             </section>
         </div>
         <?php
@@ -255,15 +272,21 @@ class GNF5_Admin {
 
     private static function guard(){
         if(!current_user_can('manage_options'))wp_send_json_error(array('message'=>'Permission denied.'),403);
+        foreach($_POST as $key=>$value){
+            if($key==='post_ids' && is_array($value)){
+                if(count($value)>200)wp_send_json_error(array('message'=>'Select no more than 200 Drafts.'),400);
+                foreach($value as $id)if(!is_scalar($id))wp_send_json_error(array('message'=>'Invalid Draft selection.'),400);
+            }elseif(!is_scalar($value))wp_send_json_error(array('message'=>'Invalid request field: '.sanitize_key($key)),400);
+        }
         check_ajax_referer('gnf5_ajax','nonce');
     }
 
     public static function ajax_check_publish_scores(){
         self::guard();
-        $result=GNF5_Publish::check_saved_scores(50);
-        $message='Checked '.$result['reviewed'].' qualifying draft(s); published '.$result['published'].'; still blocked '.$result['blocked'].'.';
+        $result=GNF5_Publish::check_saved_scores(5,true);
+        $message='Checked '.$result['reviewed'].' draft(s). All remain Draft; '.$result['blocked'].' score(s) unavailable.';
         if($result['reasons'])$message.=' '.implode(' | ',$result['reasons']);
-        elseif(!$result['reviewed'])$message.=' No eligible draft with a saved Rank Math score of 80+ was found. See Draft Auto Publish Status for saved scores and processing states.';
+        elseif(!$result['reviewed'])$message.=' No completed draft awaiting analysis was found. See Draft review and SEO status for processing states.';
         $message.=' Refresh this page to update the draft status list.';
         GNF5_Utils::log($message,$result['blocked']?'warning':'info');
         wp_send_json_success(array('message'=>$message,'result'=>$result));
@@ -272,14 +295,16 @@ class GNF5_Admin {
     public static function ajax_save_category(){
         self::guard();
         $cat=absint($_POST['cat_id']??0);
-        if(!$cat || !get_category($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
+        if(!GNF5_Utils::category_valid($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
         $row=array(
             'enabled'=>empty($_POST['enabled'])?0:1,'post_limit'=>absint($_POST['post_limit']??1),
             'interval'=>sanitize_key($_POST['interval']??'hourly'),'author_id'=>absint($_POST['author_id']??0),
             'rss'=>wp_unslash($_POST['rss']??''),'urls'=>wp_unslash($_POST['urls']??''),
             'external_links'=>wp_unslash($_POST['external_links']??''),'instructions'=>wp_unslash($_POST['instructions']??''),
         );
+        foreach(array('image_mode','gdelt_enabled','gdelt_keywords','gdelt_language','gdelt_country','gdelt_window','gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold') as $key) { if(isset($_POST[$key]) && is_scalar($_POST[$key]))$row[$key]=wp_unslash($_POST[$key]); }
         $settings=GNF5_Utils::settings();
+        $row=array_merge(GNF5_Utils::category_settings($cat,$settings),$row);
         $settings['categories'][$cat]=GNF5_Utils::sanitize_category_row($row);
         // update_option triggers settings_updated(), which rebuilds schedules once.
         update_option(GNF5_OPTION,$settings,false);
@@ -291,9 +316,10 @@ class GNF5_Admin {
     public static function ajax_test_category_sources(){
         self::guard();
         $cat=absint($_POST['cat_id']??0);
-        if(!$cat || !get_category($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
+        if(!GNF5_Utils::category_valid($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
         $cs=GNF5_Utils::category_settings($cat);
         $parts=array();$ok=0;$bad=0;
+        if (!empty($cs['gdelt_enabled'])) { $g=GNF5_Sources::gdelt_items($cat); if(is_wp_error($g)){$bad++;$parts[]='GDELT: '.$g->get_error_message();}else{$ok++;$parts[]='GDELT: '.count($g).' candidate(s).';} }
         $rss_urls=GNF5_Utils::urls_from_lines($cs['rss']);
         foreach($rss_urls as $u){
             $x=GNF5_Sources::rss_items($u,5);
@@ -328,7 +354,7 @@ class GNF5_Admin {
 
     public static function ajax_run_category(){
         self::guard();$cat=absint($_POST['cat_id']??0);$pass=max(1,absint($_POST['pass']??1));
-        $r=GNF5_Runner::run_category($cat,'immediate',1,$pass);
+        $r=GNF5_Runner::run_category($cat,'immediate',1,$pass,sanitize_text_field(wp_unslash($_POST['run_id']??'')));
         if(is_wp_error($r))wp_send_json_error(array('message'=>$r->get_error_message()));
         wp_send_json_success(array('message'=>$r['message']??'Category run finished.','result'=>$r));
     }
@@ -368,7 +394,7 @@ class GNF5_Admin {
     }
 
     public static function ajax_clear_lock(){
-        self::guard();$cat=absint($_POST['cat_id']??0);GNF5_Utils::force_clear_lock($cat);wp_send_json_success(array('message'=>'Category import lock cleared.'));
+        self::guard();$cat=absint($_POST['cat_id']??0);if(!GNF5_Utils::force_clear_lock($cat))wp_send_json_error(array('message'=>'Worker is healthy; its lock was not cleared.'));wp_send_json_success(array('message'=>'Category import lock cleared.'));
     }
 
     public static function ajax_retry_post(){
@@ -405,5 +431,129 @@ class GNF5_Admin {
         self::guard();$post=absint($_POST['post_id']??0);$r=GNF5_Runner::skip_failed($post);
         if(is_wp_error($r))wp_send_json_error(array('message'=>$r->get_error_message()));
         wp_send_json_success(array('message'=>'Post #'.$post.' removed from automatic recovery queue. The draft was not deleted.'));
+    }
+    public static function category_fields($cat,$cs) {
+        $prefix=GNF5_OPTION.'[categories]['.(int)$cat->term_id.']';
+        echo '<div class="gnf5-grid3"><label>Images<select name="'.esc_attr($prefix.'[image_mode]').'">';
+        foreach(array('global'=>'Use global setting','on'=>'ON — original images','off'=>'OFF — use my own images') as $v=>$label)echo '<option value="'.esc_attr($v).'" '.selected($cs['image_mode'],$v,false).'>'.esc_html($label).'</option>';
+        echo '</select></label><label><input type="hidden" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="0"><input type="checkbox" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="1" '.checked($cs['gdelt_enabled'],1,false).'> Enable GDELT topic discovery</label></div><div class="gnf5-grid3">';
+        $fields=array('gdelt_keywords'=>'Topic keywords (comma-separated)','gdelt_language'=>'Language (e.g. english)','gdelt_country'=>'Source country (e.g. india; blank = all)',
+            'gdelt_results'=>'GDELT results per scan','gdelt_interval'=>'GDELT cache/scan interval (minutes)','min_sources'=>'Minimum independent sources for GDELT',
+            'max_candidates'=>'Maximum candidates per run','opportunity_threshold'=>'Topic Opportunity Score target');
+        foreach($fields as $key=>$label){$numeric=in_array($key,array('gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold'),true);
+            echo '<label>'.esc_html($label).'<input type="'.($numeric?'number':'text').'" name="'.esc_attr($prefix.'['.$key.']').'" value="'.esc_attr($cs[$key]).'"></label>';
+        }
+        echo '<label>Search window<select name="'.esc_attr($prefix.'[gdelt_window]').'">';
+        foreach(array('1h','6h','12h','24h','3d','7d') as $window)echo '<option '.selected($cs['gdelt_window'],$window,false).'>'.esc_html($window).'</option>';
+        echo '</select></label></div>';
+        $run=get_option('gnf5_run_cat_'.$cat->term_id,array());$next=wp_next_scheduled(GNF5_CRON_HOOK,array((int)$cat->term_id));
+        $state=$run['status']??'idle';if($state==='running' && ($run['updated']??0)<time()-1800)$state='interrupted — ready for retry';
+        echo '<p><strong>'.esc_html($cat->name).' status:</strong> '.esc_html($state).' · Last run: '.esc_html(!empty($run['updated'])?wp_date('Y-m-d H:i',$run['updated']):'not run').' · Drafts: '.absint($run['created']??0).' · Next: '.esc_html($next?wp_date('Y-m-d H:i',$next):'not scheduled').'</p>';
+        echo '<p class="description">At least one automatic discovery method and an author are required for scheduled runs. Opportunity scores are internal heuristics, not traffic predictions. Failed sources do not disable the other methods.</p>';
+    }
+
+    public static function transparency() {
+        echo '<section class="gnf5-card"><h2>Site transparency checklist</h2><p>Editorial reminders only. This plugin does not guarantee Google or AdSense approval.</p><ul>';
+        foreach(array('about'=>'About','contact'=>'Contact','privacy-policy'=>'Privacy policy','editorial-policy'=>'Editorial policy','corrections-policy'=>'Corrections policy') as $slug=>$label){
+            $page=get_page_by_path($slug);$present=$page && $page->post_status==='publish';
+            echo '<li>'.esc_html($label).' — '.($present?'Published page found; review its accuracy.':'Not found at the expected slug; check manually.').'</li>';
+        }
+        echo '</ul><p>Verify author profiles, ownership, sourcing and corrections procedures for your site.</p></section>';
+    }
+
+    public static function meta_boxes($type,$post) {
+        if($type==='post' && $post && get_post_meta($post->ID,'_gnf5_generated_by',true)==='fresh-v5' && current_user_can('edit_post',$post->ID))
+            add_meta_box('gnf5-quality','GlobiqNews article quality report',array(__CLASS__,'report_box'),'post','normal','high');
+    }
+
+    public static function report_enqueue($hook) {
+        if(!in_array($hook,array('post.php','toplevel_page_globiqnews-fresh-ai-publisher'),true))return;
+        wp_enqueue_script('gnf6-report',GNF5_URL.'assets/report.js',array('jquery'),GNF5_VERSION,true);
+        wp_localize_script('gnf6-report','GNF6Report',array('ajaxurl'=>admin_url('admin-ajax.php'),'nonce'=>wp_create_nonce('gnf5_ajax')));
+    }
+
+    public static function report_box($post) {
+        if(!current_user_can('edit_post',$post->ID))return;
+        $report=get_post_meta($post->ID,'_gnf5_quality_report',true);$research=get_post_meta($post->ID,'_gnf5_research',true);
+        $report=is_array($report)?$report:array();$cats=wp_get_post_categories($post->ID);$cat_id=(int)($cats[0]??0);
+        $images=GNF5_Quality::images($post->ID,$cat_id);$score=GNF5_Publish::score($post->ID);
+        echo '<div class="gnf6-report" data-post="'.absint($post->ID).'"><p><strong>Generated content requires human review and manual publishing.</strong></p>';
+        if(!empty($report['content_hash']) && !hash_equals($report['content_hash'],hash('sha256',$post->post_content)))echo '<p><strong>Article changed after these checks. Recheck before relying on this report.</strong></p>';
+        $rows=array('Status'=>get_post_status($post->ID),'Word count'=>GNF5_Utils::word_count($post->post_content),
+            'Sources actually researched'=>$research['source_count']??'NOT CHECKED','Independent publisher estimate'=>$research['independent_source_estimate']??'UNKNOWN',
+            'Originality'=>$report['originality']['status']??'NOT CHECKED','Factual review'=>$report['facts']['status']??'NOT CHECKED',
+            'Added Value Score'=>isset($report['added_value']['score'])?$report['added_value']['score'].' / 100':'NOT CHECKED',
+            'Rank Math score'=>$score===null?'NOT CHECKED':$score.' / 100','SEO optimizations'=>absint(get_post_meta($post->ID,'_gnf5_seo_repair_attempts',true)).' / 3',
+            'Image generation'=>$images['generation'],'Featured image'=>$images['featured'],'Inline image'=>$images['inline'],'Image SEO'=>$images['seo']);
+        echo '<table class="widefat striped"><tbody>';foreach($rows as $label=>$value)echo '<tr><th>'.esc_html($label).'</th><td>'.esc_html((string)$value).'</td></tr>';echo '</tbody></table>';
+        echo '<p>Originality and quality scores are internal comparisons and AI-assisted evidence reviews. They are not plagiarism-proof, independent human fact checks or search-engine approval scores.</p>';
+        foreach((array)($report['warnings']??array()) as $warning)echo '<p>'.esc_html($warning).'</p>';
+        echo '<p><a class="button" href="'.esc_url(get_preview_post_link($post->ID)).'" target="_blank" rel="noopener">Preview</a> <a class="button" href="'.esc_url(get_edit_post_link($post->ID)).'">Edit Draft</a> ';
+        if(current_user_can('delete_post',$post->ID))echo '<a class="button" href="'.esc_url(get_delete_post_link($post->ID)).'">Move Draft to Trash</a> ';
+        echo '</p>';
+        foreach(array('Research and sources'=>$research,'Article quality evidence'=>$report,'Image file and ALT checks'=>$images,'Topic opportunity'=>get_post_meta($post->ID,'_gnf5_opportunity',true)) as $label=>$data){
+            echo '<details><summary>'.esc_html($label).'</summary><pre style="max-height:360px;overflow:auto;white-space:pre-wrap">'.esc_html(wp_json_encode($data,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)).'</pre></details>';
+        }
+        if(current_user_can('manage_options') && get_post_status($post->ID)==='draft'){
+            echo '<p>Save editor changes before using these actions.</p><p>';
+            foreach(array('quality'=>'Recheck Originality, Value & Facts','seo'=>'Recheck Rank Math','images'=>'Recheck Images / Image SEO','links'=>'Recheck Links','regenerate'=>'Regenerate Draft','generate_images'=>'Generate Missing Images','regenerate_images'=>'Regenerate Generated Images','remove_images'=>'Remove Generated Images') as $action=>$label)
+                echo '<button type="button" class="button gnf6-action" data-action="'.esc_attr($action).'">'.esc_html($label).'</button> ';
+            echo '</p><details><summary>Manual image ALT text — suggestions to review</summary><p>Suggested text uses attachment titles, not visual recognition. Edit it to accurately describe your own image before saving.</p>';
+            foreach($images['attachments'] as $image){$id=$image['id'];$alt=get_post_meta($id,'_wp_attachment_image_alt',true);$suggestion=trim((string)get_post_field('post_title',$id));
+                echo '<p><label>Attachment #'.absint($id).' <input type="text" class="gnf6-alt" data-attachment="'.absint($id).'" value="'.esc_attr($alt ?: $suggestion).'" size="55"></label> <button type="button" class="button gnf6-action" data-action="save_alt" data-attachment="'.absint($id).'">Save reviewed ALT</button></p>';
+            }echo '</details>';
+        }
+        echo '<p class="gnf6-result" role="status" aria-live="polite"></p></div>';
+    }
+
+    public static function ajax_article_action() {
+        self::guard();$id=absint($_POST['post_id']??0);$action=sanitize_key($_POST['task']??'');
+        if(!current_user_can('edit_post',$id) || get_post_type($id)!=='post' || get_post_meta($id,'_gnf5_generated_by',true)!=='fresh-v5' || get_post_status($id)!=='draft')wp_send_json_error(array('message'=>'A permitted plugin Draft is required.'),403);
+        if(in_array($action,array('regenerate','regenerate_images','remove_images'),true) && ($_POST['confirmed']??'')!=='yes')wp_send_json_error(array('message'=>'Confirm the specific replacement/removal action first.'),400);
+        $cats=wp_get_post_categories($id);$cat_id=(int)($cats[0]??0);
+        if(!GNF5_Utils::acquire_lock($cat_id))wp_send_json_error(array('message'=>'Another article is processing. Please retry shortly.'),409);
+        $result=true;$message='Checks updated. Draft remains unpublished.';
+        try{
+            GNF5_Sources::reset_budget();
+            if($action==='regenerate'){$result=GNF5_Runner::regenerate($id);$message='Draft regeneration finished. Review before manually publishing.';}
+            elseif($action==='seo'){GNF5_RankMath::reset_retry($id);GNF5_RankMath::run($id);$message='Rank Math recheck finished. Score: '.(GNF5_Publish::score($id)??'NOT CHECKED').'. '.get_post_meta($id,'_gnf5_seo_error',true);}
+            elseif($action==='quality'){
+                $research=GNF5_Research::load($id,true);
+                if(is_wp_error($research))$result=$research;
+                else{
+                    $article=array('title'=>get_the_title($id),'content_html'=>get_post_field('post_content',$id));
+                    $hash=hash('sha256',$article['content_html']);$report=GNF5_Quality::evaluate($article,$research,true);
+                    if($hash!==hash('sha256',get_post_field('post_content',$id)))$result=new WP_Error('changed','Article changed during checking; stale report discarded.');
+                    else GNF5_Quality::store($id,$report);
+                }
+            }elseif($action==='images'){
+                $r=(array)get_post_meta($id,'_gnf5_quality_report',true);$r['images']=GNF5_Quality::images($id,$cat_id);update_post_meta($id,'_gnf5_quality_report',$r);
+            }elseif($action==='links'){
+                preg_match_all('/<a\b[^>]*href=["\']([^"\']+)/i',get_post_field('post_content',$id),$links);$checks=array();
+                foreach(array_slice(array_unique($links[1]),0,10) as $url){
+                    $local=url_to_postid($url);
+                    $check=$local?array('status'=>get_post_status($local)==='publish'?'ok':'unavailable','message'=>'Local post lookup'):GNF5_Sources::test_external_link($url);
+                    $checks[]=array('url'=>$url,'result'=>is_wp_error($check)?array('status'=>'UNKNOWN','message'=>$check->get_error_message()):$check);
+                }
+                $r=(array)get_post_meta($id,'_gnf5_quality_report',true);$r['links']=$checks;update_post_meta($id,'_gnf5_quality_report',$r);
+            }elseif($action==='save_alt'){
+                $attachment=absint($_POST['attachment_id']??0);$images=GNF5_Quality::images($id,$cat_id);
+                if(!in_array($attachment,array_column($images['attachments'],'id'),true) || !current_user_can('edit_post',$attachment))$result=new WP_Error('attachment','This attachment is not part of this article or cannot be edited.');
+                else {update_post_meta($attachment,'_wp_attachment_image_alt',sanitize_text_field(wp_unslash($_POST['alt']??'')));$message='Reviewed ALT text saved. Recheck Rank Math when ready.';}
+            }elseif(in_array($action,array('generate_images','regenerate_images','remove_images'),true)){
+                if($action!=='remove_images' && !GNF5_Utils::images_enabled($cat_id))$result=new WP_Error('images_off','Image generation is OFF. No image call was made. Enable it in the category/global settings first.');
+                else $result=GNF5_Runner::image_action($id,$action);
+            }else $result=new WP_Error('action','Unknown action.');
+        }catch(Throwable $e){$result=new WP_Error('action_failed',GNF5_Utils::redact($e->getMessage()));}
+        finally{GNF5_Utils::release_lock($cat_id);}
+        if(is_wp_error($result))wp_send_json_error(array('message'=>$result->get_error_message()));
+        wp_send_json_success(array('message'=>$message.' Refresh to view the report.'));
+    }
+
+    public static function export_log() {
+        if(!current_user_can('manage_options'))wp_die('Permission denied.',403);
+        check_admin_referer('gnf5_export_log');
+        nocache_headers();header('Content-Type: application/json; charset=utf-8');header('Content-Disposition: attachment; filename="globiqnews-log.json"');
+        echo wp_json_encode(get_option(GNF5_LOG_OPTION,array()),JSON_PRETTY_PRINT);exit;
     }
 }

@@ -1,0 +1,7 @@
+{
+  "name": "globiqnews-rankmath-scorer",
+  "version": "5.31.0",
+  "private": true,
+  "engines": { "node": "22.x" },
+  "scripts": { "build": "node build.cjs", "start": "node server.cjs", "test": "node test.cjs" }
+}
