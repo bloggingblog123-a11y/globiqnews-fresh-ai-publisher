@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.0
+# GlobiqNews Fresh AI Publisher — 6.0.1
+
+6.0.1 repairs non-image SEO and link handling. Local text checks and bounded AI improvement work without a background scoring service; the actual Rank Math score remains separate. Existing unchanged generated Drafts can use **Improve SEO & Links** in the editor report. See [validation and limitations](TEST-REPORT-6.0.1.md). Factual accuracy takes priority over making every indicator green.
 
 Discover topics, collect evidence, plan independent articles, and save original **Drafts for human review**. Version 6 replaces automatic article publication with manual publishing, including when Rank Math shows 80 or 100. Normal WordPress publishing remains available.
 

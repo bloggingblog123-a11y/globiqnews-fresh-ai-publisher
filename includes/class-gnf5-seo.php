@@ -508,31 +508,135 @@ class GNF5_SEO {
         return $items ? self::simple_heading('Related reading','related-reading').self::simple_list($items) : '';
     }
 
+    private static function link_terms($text) {
+        $stop=array('the','and','for','with','from','this','that','your','what','when','where','which','about','into','have','has','are','was','were','will','can','how','why','new','news','latest','update','guide');
+        return array_values(array_unique(array_filter(preg_split('/\s+/u',self::normalize_title($text)),function($w)use($stop){return strlen($w)>2 && !in_array($w,$stop,true);}))); 
+    }
+
+    /** Insert at most one link into existing paragraph text, never inside another link. */
+    private static function link_phrase($html,$url,$phrases,&$inserted) {
+        $inserted=false;if(!class_exists('DOMDocument'))return $html;
+        $previous=libxml_use_internal_errors(true);$doc=new DOMDocument();
+        @$doc->loadHTML('<?xml encoding="utf-8" ?><div id="gnf-links">'.$html.'</div>',LIBXML_HTML_NOIMPLIED|LIBXML_HTML_NODEFDTD|LIBXML_NONET);
+        $xp=new DOMXPath($doc);
+        foreach($phrases as $phrase){
+            $phrase=trim(wp_strip_all_tags($phrase));if(strlen($phrase)<3)continue;
+            foreach($xp->query('//*[@id="gnf-links"]//p//text()[not(ancestor::a)]') as $n){
+                if(!preg_match('/(?<![\p{L}\p{N}])'.preg_quote($phrase,'/').'(?![\p{L}\p{N}])/iu',$n->nodeValue,$m,PREG_OFFSET_CAPTURE))continue;
+                $at=$m[0][1];$text=$m[0][0];$parent=$n->parentNode;
+                $parent->insertBefore($doc->createTextNode(substr($n->nodeValue,0,$at)),$n);
+                $a=$doc->createElement('a');$a->setAttribute('href',$url);$a->appendChild($doc->createTextNode($text));
+                $parent->insertBefore($a,$n);$parent->insertBefore($doc->createTextNode(substr($n->nodeValue,$at+strlen($text))),$n);$parent->removeChild($n);
+                $inserted=true;break 2;
+            }
+        }
+        $root=$doc->getElementById('gnf-links');$out='';if($root)foreach($root->childNodes as $n)$out.=$doc->saveHTML($n);
+        libxml_clear_errors();libxml_use_internal_errors($previous);
+        return $inserted && $out!==''?$out:$html;
+    }
+
     public static function insert_internal_links($html, $post_id, $cat_id) {
         if (empty(GNF5_Utils::settings()['internal_links']) || !class_exists('DOMDocument')) return $html;
         $kw = trim((string)get_post_meta($post_id, 'rank_math_focus_keyword', true));
         if ($kw === '') return $html;
-        $posts = get_posts(array('post_type'=>'post','post_status'=>'publish','numberposts'=>12,'category'=>$cat_id,'post__not_in'=>array($post_id),'s'=>$kw));
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        @$doc->loadHTML('<?xml encoding="utf-8" ?><div id="gnf-links">'.$html.'</div>', LIBXML_HTML_NOIMPLIED|LIBXML_HTML_NODEFDTD|LIBXML_NONET);
-        $xp = new DOMXPath($doc); $count=0;
-        foreach ($posts as $p) {
-            $anchor = trim(explode(',',(string)get_post_meta($p->ID,'rank_math_focus_keyword',true))[0]);
-            if (!$anchor || !self::contains_exact_phrase($p->post_title.' '.$p->post_content,$kw)) continue;
-            $nodes=array(); foreach ($xp->query('//*[@id="gnf-links"]//p//text()[not(ancestor::a)]') as $n) $nodes[]=$n;
-            foreach ($nodes as $n) {
-                if (!preg_match('/(?<![\p{L}\p{N}])'.preg_quote($anchor,'/').'(?![\p{L}\p{N}])/iu',$n->nodeValue,$m,PREG_OFFSET_CAPTURE)) continue;
-                $at=$m[0][1]; $text=$m[0][0]; $parent=$n->parentNode;
-                $parent->insertBefore($doc->createTextNode(substr($n->nodeValue,0,$at)),$n);
-                $a=$doc->createElement('a');$a->setAttribute('href',get_permalink($p->ID));$a->appendChild($doc->createTextNode($text));
-                $parent->insertBefore($a,$n);$parent->insertBefore($doc->createTextNode(substr($n->nodeValue,$at+strlen($text))),$n);$parent->removeChild($n);
-                $count++;break;
-            }
-            if ($count>=3) break;
+        $terms=self::link_terms($kw.' '.get_the_title($post_id));
+        $args=array('post_type'=>'post','post_status'=>'publish','numberposts'=>40,'post__not_in'=>array($post_id),'has_password'=>false);
+        $posts=get_posts(array_merge($args,array('category'=>$cat_id)));$seen=array();$ranked=array();
+        // Broaden beyond exact-keyword matches and beyond this category, with bounded queries.
+        foreach(array_slice(self::link_terms($kw),0,2) as $term)$posts=array_merge($posts,get_posts(array_merge($args,array('s'=>$term))));
+        foreach($posts as $p){
+            if(isset($seen[$p->ID]) || $p->post_password || $p->post_status!=='publish')continue;$seen[$p->ID]=true;
+            $other=trim(explode(',',(string)get_post_meta($p->ID,'rank_math_focus_keyword',true))[0]);
+            $shared=count(array_intersect($terms,self::link_terms($p->post_title.' '.$other)));
+            $exact=count(self::link_terms($kw))>=2 && self::contains_exact_phrase($p->post_title.' '.$other,$kw);
+            if(!$exact && $shared<2)continue;
+            $ranked[]=array('post'=>$p,'anchor'=>$other,'rank'=>$shared+($exact?4:0)+(has_category($cat_id,$p)?1:0));
         }
-        $root=$doc->getElementById('gnf-links');$out='';if($root)foreach($root->childNodes as $n)$out.=$doc->saveHTML($n);
-        return $out ?: $html;
+        usort($ranked,function($a,$b){return $b['rank']<=>$a['rank'];});$count=0;$related=array();
+        foreach($ranked as $row){
+            $p=$row['post'];$url=get_permalink($p->ID);if(!$url || strpos(html_entity_decode($html,ENT_QUOTES,'UTF-8'),$url)!==false)continue;
+            $phrases=array_filter(array($row['anchor'],$p->post_title),function($s){return GNF5_Utils::word_count($s)>=2;});
+            $html=self::link_phrase($html,$url,$phrases,$inserted);
+            if(!$inserted)$related[]='<li><a href="'.esc_url($url).'">'.esc_html($p->post_title).'</a></li>';
+            if(++$count>=3)break;
+        }
+        return $html.($related?'<h2>Related reading</h2><ul>'.implode('',$related).'</ul>':'');
+    }
+
+    /** Only use administrator-approved URLs or researched primary sources supporting retained facts. */
+    public static function insert_external_links($html,$post_id,$cat_id) {
+        $research=get_post_meta($post_id,'_gnf5_research',true);$research=is_array($research)?$research:array();
+        $cs=GNF5_Utils::category_settings($cat_id);$candidates=array();$home=strtolower((string)wp_parse_url(home_url('/'),PHP_URL_HOST));
+        foreach((array)($research['primary_sources']??array()) as $primary){
+            foreach((array)($research['sources']??array()) as $source){
+                if(($source['id']??'')!==($primary['source']??''))continue;
+                $phrases=array();foreach((array)($research['facts']??array()) as $fact){
+                    if(in_array($source['id'],array_column((array)($fact['evidence']??array()),'source'),true))$phrases[]=$fact['subject'];
+                }
+                if($phrases)$candidates[]=array('url'=>$source['url'],'phrases'=>array_unique($phrases),'trusted'=>false);
+            }
+        }
+        foreach(array_slice(GNF5_Utils::urls_from_lines($cs['external_links']??''),0,5) as $url)$candidates[]=array('url'=>$url,'phrases'=>array(),'trusted'=>true);
+        $count=0;$seen=array();
+        foreach(array_slice($candidates,0,7) as $candidate){
+            $url=GNF5_Utils::normalize_url($candidate['url']);$host=strtolower((string)wp_parse_url($url,PHP_URL_HOST));
+            if(!$url || !$host || preg_replace('/^www\./','',$host)===preg_replace('/^www\./','',$home) || isset($seen[$url]))continue;$seen[$url]=true;
+            if(strpos(html_entity_decode($html,ENT_QUOTES,'UTF-8'),$url)!==false)continue;
+            $check=GNF5_Sources::test_external_link($url,false);
+            // A blocked/error URL is not described as verified and is not inserted.
+            if(is_wp_error($check) || ($check['status']??'')!=='ok')continue;
+            $html=self::link_phrase($html,$url,$candidate['phrases'],$inserted);
+            if(!$inserted && $candidate['trusted']){
+                $html.='<p>Further information: <a href="'.esc_url($url).'">'.esc_html($host).'</a>.</p>';$inserted=true;
+            }
+            if($inserted && ++$count>=2)break;
+        }
+        return $html;
+    }
+
+    /** Local diagnostics, never a fabricated Rank Math score. Image checks are deliberately separate. */
+    public static function text_checks($d) {
+        $html=$d['content_html']??'';$plain=trim(wp_strip_all_tags(str_replace(array('</p>','</h2>','</h3>','</li>'), ' ', $html)));
+        $kw=trim(explode(',',(string)($d['focus_keyword']??''))[0]);$title=$d['seo_title']??$d['title']??'';
+        $words=GNF5_Utils::word_count($html);$density=self::keyword_density($html,$kw);
+        $start=implode(' ',array_slice(preg_split('/\s+/u',$plain),0,max(1,(int)ceil($words*0.1))));
+        $checks=array();
+        $add=function($key,$ok,$message,$repair=true)use(&$checks){$checks[$key]=array('status'=>$ok?'PASS':'REVIEW','message'=>$message,'repair'=>$repair);};
+        $add('keyword', $kw!=='','Choose a specific focus keyword that accurately describes the verified topic.');
+        $add('title_keyword',self::contains_exact_phrase($title,$kw),'Use the focus keyword naturally in the SEO title.');
+        $add('title_start',$kw!=='' && stripos(trim($title),$kw)===0,'Start the SEO title with the focus keyword when it reads naturally.');
+        $add('description',self::contains_exact_phrase($d['meta_description']??'',$kw),'Include the focus keyword naturally in the meta description.');
+        $add('slug',self::slug_contains_focus_keyword($d['slug']??'',$kw),'Include the focus keyword in the URL slug without making it long.');
+        $add('introduction',self::contains_exact_phrase($start,$kw),'Use the focus keyword within the first 10% of the article.');
+        $add('body_keyword',self::contains_exact_phrase($plain,$kw),'Use the focus keyword naturally in the article body.');
+        $add('heading',self::heading_contains_exact_phrase($html,$kw),'Use the focus keyword in a relevant H2 or H3.');
+        $add('length',$words>=600,'Article has '.$words.' words. Aim for at least 600, preferably 1000–1200, only with supported useful explanations. If evidence cannot support expansion, provide short_reason; never pad or invent facts.');
+        $add('density',$density>=1 && $density<=1.5,'Focus-keyword density is '.round($density,2).'%. Aim around 1–1.5% through natural references, never repetitive filler.');
+        $add('url_length',strlen($d['slug']??'')<=75,'Keep the URL slug concise (75 characters or fewer).');
+        $add('sentiment',self::has_sentiment_word($title),'Use a positive or negative title word only if the verified facts justify it; otherwise retain a neutral headline.');
+        $add('power_word',self::has_power_word($title),'Use an accurate descriptive power word only when supported; do not exaggerate.');
+        $add('title_number',self::has_number($title),'Use a verified number or a truthful list count only when useful; never invent a date or number.');
+        preg_match_all('/<p\b[^>]*>(.*?)<\/p>/is',$html,$pars);$long=false;foreach($pars[1] as $p)if(GNF5_Utils::word_count($p)>120)$long=true;
+        $add('paragraphs',!$long,'Break long paragraphs into shorter readable paragraphs.');
+        return $checks;
+    }
+
+    public static function text_feedback($d) {
+        $out=array();foreach(self::text_checks($d) as $check)if($check['status']!=='PASS' && $check['repair'])$out[]=$check['message'];
+        return $out;
+    }
+
+    public static function checklist($post_id) {
+        $d=array('title'=>get_the_title($post_id),'seo_title'=>get_post_meta($post_id,'rank_math_title',true)?:get_the_title($post_id),
+            'focus_keyword'=>get_post_meta($post_id,'rank_math_focus_keyword',true),'meta_description'=>get_post_meta($post_id,'rank_math_description',true),
+            'slug'=>get_post_field('post_name',$post_id),'content_html'=>get_post_field('post_content',$post_id));
+        $checks=self::text_checks($d);$links=self::anchor_audit($d['content_html'],$post_id);
+        $checks['internal_links']=array('status'=>$links['valid_internal']?'PASS':'REVIEW','message'=>'Relevant published internal links: '.$links['valid_internal'].'. If zero, enable internal links and ensure related published posts exist.');
+        $checks['external_links']=array('status'=>$links['external']?'PASS':'REVIEW','message'=>'External links: '.$links['external'].'. If zero, add useful trusted external URLs in category settings or research a relevant primary source.');
+        $checks['dofollow']=array('status'=>$links['dofollow_external']?'PASS':'REVIEW','message'=>'Followable external links: '.$links['dofollow_external'].'. Only validated editorial links are added.');
+        $checks['keyword_unique']=array('status'=>self::focus_keyword_is_unique($d['focus_keyword'],$post_id)?'PASS':'REVIEW','message'=>'A reused focus keyword needs editorial review; do not change the article topic simply to pass this check.');
+        $checks['toc']=array('status'=>has_block('rank-math/toc-block',$d['content_html'])?'PASS':'REVIEW','message'=>'Table of contents is added when enabled and at least two headings exist.');
+        return $checks;
     }
 
     public static function external_links_section($links_text,$source_url=''){
@@ -689,13 +793,18 @@ class GNF5_SEO {
         $home=preg_replace('/^www\./i','',(string)wp_parse_url(home_url('/'),PHP_URL_HOST));
         $source=GNF5_Utils::normalize_url((string)get_post_meta($post_id,'_gnf5_source_url',true));
         foreach($doc->getElementsByTagName('a') as $a){
-            $href=GNF5_Utils::normalize_url($a->getAttribute('href'));
+            $raw=html_entity_decode($a->getAttribute('href'),ENT_QUOTES,'UTF-8');$parts=wp_parse_url($raw);
+            if(!$parts || !in_array($parts['scheme']??'',array('http','https'),true) || isset($parts['user']) || isset($parts['pass']))continue;
+            $local=preg_replace('/^www\./i','',(string)($parts['host']??''))===$home;
+            // Local links use a database lookup, not an outbound fetch. This also supports staging hosts.
+            $href=$local?$raw:GNF5_Utils::normalize_url($raw);
             if(!$href)continue;
             if($source && GNF5_Utils::source_identity_url($href)===GNF5_Utils::source_identity_url($source))$out['source_visible']=true;
             $host=preg_replace('/^www\./i','',(string)wp_parse_url($href,PHP_URL_HOST));
             if($host===$home){
                 $out['internal']++;
-                $valid=(url_to_postid($href)>0);
+                $target=url_to_postid($href);
+                $valid=$target && get_post_status($target)==='publish' && !get_post_field('post_password',$target);
                 if(!$valid){
                     foreach((array)wp_get_post_categories($post_id) as $cid){
                         $cat_url=get_category_link(absint($cid));

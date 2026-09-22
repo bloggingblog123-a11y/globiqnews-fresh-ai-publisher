@@ -1,3 +1,6 @@
+6.0.1 — 2026-09-22
+Fix external-link insertion; broaden relevant internal linking; run non-image SEO preflight without Node/remote scoring; add Improve SEO & Links and a private checklist; include metadata in factual review; bound unproductive repairs; correct busy/error status reporting. Images and manual edits preserved. Draft-only publishing retained. See TEST-REPORT-6.0.1.md.
+
 6.0.0 — 2026-09-21
 Research-first original Drafts; GDELT; fact sheets and private quality reports; optional original WebP images; manual-edit/media protection; bounded batch limits and safe retries. All automatic publication removed. Existing settings and schedules preserved through versioned migration. See TEST-REPORT-6.0.0.md.
 

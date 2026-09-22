@@ -74,7 +74,7 @@
 
     function runCategoryBatch(cat,limit,onDone){
         var made=0,requests=0,zeroStreak=0,runId='ui-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-        var summary={published:0,drafts:0,duplicates:0,failed:0,rssFailures:0,sourceFailures:0,rssCandidates:0,sourceCandidates:0,diagnostics:[]};
+        var summary={published:0,drafts:0,duplicates:0,failed:0,rssFailures:0,sourceFailures:0,rssCandidates:0,sourceCandidates:0,checkedSources:false,interrupted:false,diagnostics:[]};
         limit=Math.max(1,parseInt(limit||1,10));var maxRequests=(limit*4)+4;
 
         function addDiagnostics(list){
@@ -85,6 +85,7 @@
             requests++;status(catName(cat)+': created '+made+' of '+limit+'. Reading GDELT/RSS/Source candidates…');
             call('gnf5_run_category',{cat_id:cat,pass:Math.min(4,requests),run_id:runId}).done(function(r){
                 if(r&&r.success&&r.data.result){
+                    summary.checkedSources=true;
                     var d=r.data.result,c=parseInt(d.created||0,10);made+=c;
                     if(d.done){onDone(made,summary);return;}
                     summary.published+=parseInt(d.published||0,10);
@@ -104,10 +105,12 @@
                     }
                     if(c===0)zeroStreak++;else zeroStreak=0;step();
                 }else{
+                    summary.interrupted=true;
                     var msg=(r&&r.data&&r.data.message)||'Category run failed.';
                     addDiagnostics([msg]);onDone(made,summary);
                 }
             }).fail(function(xhr){
+                summary.interrupted=true;
                 var msg='Category request failed.';
                 if(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message)msg=xhr.responseJSON.data.message;
                 addDiagnostics([msg]);onDone(made,summary);
@@ -143,12 +146,12 @@
             var limit=(GNF5Data.catLimits||{})[cat]||1;
             b.text('Running…');
             runCategoryBatch(cat,limit,function(made,summary){
-                var msg=catName(cat)+' run finished. Target '+limit+'; created '+made+
+                var msg=catName(cat)+(summary.interrupted?' run stopped. Target ':' run finished. Target ')+limit+'; created '+made+
                     ' | Drafts '+summary.drafts+
                     ' | duplicates '+summary.duplicates+' | failed before create '+summary.failed+'.';
                 if(made===0){
                     if(summary.rssFailures>0)msg+=' RSS feed error detected.';
-                    else if(summary.rssCandidates===0&&summary.sourceCandidates===0)msg+=' No usable RSS/Source article candidates were found.';
+                    else if(summary.checkedSources&&!summary.interrupted&&summary.rssCandidates===0&&summary.sourceCandidates===0)msg+=' No usable new article candidates reached processing.';
                     if(summary.diagnostics.length)msg+=' '+summary.diagnostics[0];
                 }
                 status(msg,made>0);

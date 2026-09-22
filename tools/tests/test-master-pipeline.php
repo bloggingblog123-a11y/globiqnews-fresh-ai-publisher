@@ -1,6 +1,6 @@
 <?php
 $_SERVER['HTTP_HOST']='globiqnews.localhost:8097';$_SERVER['REQUEST_URI']='/';
-require_once __DIR__.'/bootstrap600.php';
+require __DIR__.'/wp-test/wordpress/wp-load.php';
 require_once ABSPATH.'wp-admin/includes/template.php';
 $checks=0;$created=array();$media=array();$settings_backup=get_option(GNF5_OPTION);$history_backup=get_option('gnf5_topic_history',array());
 $requests=array();$prompts=array();$mode='normal';$serial=0;$case='Orion';
@@ -32,7 +32,7 @@ $mock=function($pre,$args,$url)use(&$requests,&$prompts,&$mode,&$serial,&$case){
         }elseif(strpos($p,'TASK: REVIEW_ARTICLE_QUALITY')!==false){
             $a=explode("\nFACTS_WITH_EVIDENCE:\n",explode("\nARTICLE:\n",$p,2)[1],2)[0];$article=json_decode($a,true);
             preg_match_all('/<p[^>]*>(.*?)<\/p>/is',$article['html'],$pars);$claims=array();
-            foreach(array_merge(array($article['title']),$pars[1]) as $claim)$claims[]=array('claim'=>GNF5_Research::text($claim),'fact_ids'=>array('F1','F2','F3','F4','F5'),'supported'=>true,'reason'=>'Fixture evidence review');
+            foreach(array_merge(array($article['title'],$article['seo_title']??'',$article['meta_description']??'',$article['excerpt']??''),$pars[1]) as $claim)$claims[]=array('claim'=>GNF5_Research::text($claim),'fact_ids'=>array('F1','F2','F3','F4','F5'),'supported'=>true,'reason'=>'Fixture evidence review');
             $sources=after6($p,"SOURCE_COMPARISON_ONLY:\n");$comp=array();foreach($sources as $source)$comp[]=array('source'=>$source['id'],'imitated'=>false,'reason'=>'Fixture independent organization');
             $value=array();foreach(array('background','explanation','comparison','implications','additional') as $kind)$value[]=array('kind'=>$kind,'excerpt'=>GNF5_Research::text($pars[1][0]),'fact_ids'=>array('F1'));
             $out=array('claim_checks'=>$mode==='partial_review'?array_slice($claims,0,1):$claims,'conflicts'=>array(),'structural_comparisons'=>$comp,'added_value'=>$value);
