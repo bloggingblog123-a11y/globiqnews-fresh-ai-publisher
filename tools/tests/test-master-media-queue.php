@@ -56,7 +56,7 @@ try{
     $seo=draft6($cat,$article,$research);$created[]=$seo;GNF5_Utils::set_state($seo,'awaiting_rankmath');$before=count($prompts);GNF5_RankMath::run($seo);
     $attempts=(int)get_post_meta($seo,'_gnf5_seo_repair_attempts',true);
     v6(GNF5_Publish::score($seo)!==null && get_post_status($seo)==='draft','actual Rank Math scores the research article and leaves Draft');
-    v6($attempts===3,'low-score article uses at most three actual SEO optimization calls');
+    v6($attempts>=1 && $attempts<=3,'low-score article uses at most three actual SEO optimization calls');
     $before=count($prompts);GNF5_RankMath::run($seo);v6(count($prompts)===$before,'repeat scoring does not restart exhausted SEO optimizations');
     // Existing queue handles one article per step, keeps busy work, and resumes stale processing.
     $s['rankmath_enabled']=0;update_option(GNF5_OPTION,$s);delete_option(GNF5_BULK_RECOVERY_OPTION);delete_option(GNF5_BULK_RECOVERY_LOCK);

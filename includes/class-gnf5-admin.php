@@ -488,6 +488,9 @@ class GNF5_Admin {
         echo '<table class="widefat striped"><tbody>';foreach($rows as $label=>$value)echo '<tr><th>'.esc_html($label).'</th><td>'.esc_html((string)$value).'</td></tr>';echo '</tbody></table>';
         echo '<p>Originality and quality scores are internal comparisons and AI-assisted evidence reviews. They are not plagiarism-proof, independent human fact checks or search-engine approval scores.</p>';
         foreach((array)($report['warnings']??array()) as $warning)echo '<p>'.esc_html($warning).'</p>';
+        echo '<details open><summary><strong>Non-image SEO checklist</strong></summary><p>These local checks work without a scoring service. Rank Math calculates the actual score separately. REVIEW is an editorial item, not a failed article. Neutral titles and shorter articles may be appropriate when the evidence requires them.</p><table class="widefat striped"><tbody>';
+        foreach(GNF5_SEO::checklist($post->ID) as $name=>$check)echo '<tr><th>'.esc_html(ucwords(str_replace('_',' ',$name))).'</th><td>'.esc_html($check['status']).'</td><td>'.esc_html($check['message']).'</td></tr>';
+        echo '</tbody></table><p>'.esc_html(get_post_meta($post->ID,'_gnf5_seo_repair_note',true)).'</p></details>';
         echo '<p><a class="button" href="'.esc_url(get_preview_post_link($post->ID)).'" target="_blank" rel="noopener">Preview</a> <a class="button" href="'.esc_url(get_edit_post_link($post->ID)).'">Edit Draft</a> ';
         if(current_user_can('delete_post',$post->ID))echo '<a class="button" href="'.esc_url(get_delete_post_link($post->ID)).'">Move Draft to Trash</a> ';
         echo '</p>';
@@ -496,7 +499,7 @@ class GNF5_Admin {
         }
         if(current_user_can('manage_options') && get_post_status($post->ID)==='draft'){
             echo '<p>Save editor changes before using these actions.</p><p>';
-            foreach(array('quality'=>'Recheck Originality, Value & Facts','seo'=>'Recheck Rank Math','images'=>'Recheck Images / Image SEO','links'=>'Recheck Links','regenerate'=>'Regenerate Draft','generate_images'=>'Generate Missing Images','regenerate_images'=>'Regenerate Generated Images','remove_images'=>'Remove Generated Images') as $action=>$label)
+            foreach(array('quality'=>'Recheck Originality, Value & Facts','improve_seo'=>'Improve SEO & Links','seo'=>'Recheck Rank Math','images'=>'Recheck Images / Image SEO','links'=>'Recheck Links','regenerate'=>'Regenerate Draft','generate_images'=>'Generate Missing Images','regenerate_images'=>'Regenerate Generated Images','remove_images'=>'Remove Generated Images') as $action=>$label)
                 echo '<button type="button" class="button gnf6-action" data-action="'.esc_attr($action).'">'.esc_html($label).'</button> ';
             echo '</p><details><summary>Manual image ALT text — suggestions to review</summary><p>Suggested text uses attachment titles, not visual recognition. Edit it to accurately describe your own image before saving.</p>';
             foreach($images['attachments'] as $image){$id=$image['id'];$alt=get_post_meta($id,'_wp_attachment_image_alt',true);$suggestion=trim((string)get_post_field('post_title',$id));
@@ -516,6 +519,7 @@ class GNF5_Admin {
         try{
             GNF5_Sources::reset_budget();
             if($action==='regenerate'){$result=GNF5_Runner::regenerate($id);$message='Draft regeneration finished. Review before manually publishing.';}
+            elseif($action==='improve_seo'){$result=GNF5_Runner::improve_seo($id);$message='Link and non-image SEO improvement finished. '.get_post_meta($id,'_gnf5_seo_repair_note',true).' Review the checklist and reopen the editor to see Rank Math’s actual score.';}
             elseif($action==='seo'){GNF5_RankMath::reset_retry($id);GNF5_RankMath::run($id);$message='Rank Math recheck finished. Score: '.(GNF5_Publish::score($id)??'NOT CHECKED').'. '.get_post_meta($id,'_gnf5_seo_error',true);}
             elseif($action==='quality'){
                 $research=GNF5_Research::load($id,true);

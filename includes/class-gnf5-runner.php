@@ -370,6 +370,7 @@ class GNF5_Runner {
 
     private static function compose_content($post_id,$article,$image_ids,$cat_id,$cs,$source_url) {
         $html=GNF5_SEO::insert_internal_links($article['content_html'],$post_id,$cat_id);
+        $html=GNF5_SEO::insert_external_links($html,$post_id,$cat_id);
         $content=GNF5_SEO::build_gutenberg_content($html);
         if(GNF5_Utils::images_enabled($cat_id))$content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts']);
         // No automatic source/URL dump. Research is available in the private report.
@@ -396,12 +397,14 @@ class GNF5_Runner {
             }
             if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed while processing; generated text did not overwrite human edits.');
             $content=self::compose_content($post_id,$article,$image_ids,$cat_id,$cs,get_post_meta($post_id,'_gnf5_source_url',true));
+            if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during link validation. Your changes were preserved.');
             $updated=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'Draft finalization');
             if(is_wp_error($updated))throw new RuntimeException($updated->get_error_message());
             if(GNF5_Utils::images_enabled($cat_id) && !empty($image_ids[0]) && !get_post_thumbnail_id($post_id))set_post_thumbnail($post_id,$image_ids[0]);
             GNF5_SEO::save_rank_math($post_id,$article);
             update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($article['content_html']));
             GNF5_Publish::checkpoint($post_id);
+            self::optimize_text($post_id);
             if($image_error){
                 GNF5_Utils::set_state($post_id,'image_pending','Draft body is ready. Optional image processing: '.$image_error);
                 update_post_meta($post_id,'_gnf5_validation_errors',array($image_error));
@@ -425,31 +428,69 @@ class GNF5_Runner {
         }
     }
 
-    /** One bounded improvement of an unchanged generated article, using actual failed tests. */
-    public static function repair_scored_post($post_id) {
-        if(!GNF5_Publish::can_rewrite($post_id) || (int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3)return false;
+    /** Works without Node/remote scoring; shares the three-attempt limit with real-score repair. */
+    public static function optimize_text($post_id) {
+        if(empty(GNF5_Utils::settings()['rankmath_enabled']))return;
+        for($i=0;$i<3;$i++)if(!self::repair_scored_post($post_id,true))break;
+    }
+
+    public static function improve_seo($post_id) {
+        if(!GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Human edits detected. Your text was preserved; use the SEO checklist to make changes in the editor.');
+        $article=get_post_meta($post_id,'_gnf5_article_data',true);
+        if(!is_array($article) || empty($article['content_html']))return new WP_Error('article_missing','No generated article checkpoint exists.');
+        $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);$token=self::edit_token($post_id);
+        $content=self::compose_content($post_id,$article,(array)get_post_meta($post_id,'_gnf5_image_ids',true),$cat_id,GNF5_Utils::category_settings($cat_id),'');
+        if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during link checks. Changes were not overwritten.');
+        $saved=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'SEO link improvement');
+        if(is_wp_error($saved))return $saved;
+        GNF5_Publish::checkpoint($post_id);self::optimize_text($post_id);
+        GNF5_Publish::wait_for_score($post_id,false);
+        $latest=get_post_meta($post_id,'_gnf5_article_data',true);GNF5_Quality::store($post_id,$latest['quality']??array());
+        return true;
+    }
+
+    /** One bounded, independently quality-checked improvement of an unchanged generated article. */
+    public static function repair_scored_post($post_id,$local=false) {
+        if(!GNF5_Publish::can_rewrite($post_id))return false;
+        if((int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3){update_post_meta($post_id,'_gnf5_seo_repair_note','Three SEO optimization attempts used. Review remaining items manually; no further AI rewrite was requested.');return false;}
         $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
         if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
+        $repair_key=hash('sha256',serialize($article));
+        if(get_post_meta($post_id,'_gnf5_seo_repair_stopped',true)===$repair_key)return false;
         $token=self::edit_token($post_id);$cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
-        $attempt=(int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)+1;update_post_meta($post_id,'_gnf5_seo_repair_attempts',$attempt);
-        $errors=array();foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
-            if(in_array($name,array('hasContentAI','lengthContent','titleHasNumber','titleHasPowerWords','titleSentiment'),true))continue;
+        $errors=GNF5_SEO::text_feedback($article);
+        if(!$local)foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
+            // Images, paid Content AI and link placement are not tasks for the text writer.
+            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow'),true))continue;
             if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
         }
+        if(!$errors)return false;
+        $attempt=(int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)+1;update_post_meta($post_id,'_gnf5_seo_repair_attempts',$attempt);
+        update_post_meta($post_id,'_gnf5_seo_repair_note','Checking non-image SEO, attempt '.$attempt.' of 3.');
         $repaired=GNF5_Writer::repair_for_validation($article,$research,$errors,$cat_id);
-        if(is_wp_error($repaired))return false;
+        if(is_wp_error($repaired)){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO improvement unavailable: '.GNF5_Utils::redact($repaired->get_error_message()));return false;}
+        $same=true;foreach(array('title','seo_title','focus_keyword','slug','meta_description','excerpt','content_html') as $key)if(($article[$key]??'')!==($repaired[$key]??''))$same=false;
+        if($same || ($local && count(GNF5_SEO::text_feedback($repaired))>=count($errors))){
+            update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
+            update_post_meta($post_id,'_gnf5_seo_repair_note','No measurable text-check improvement was returned. Original text retained; review the checklist.');return false;
+        }
         $report=GNF5_Quality::evaluate($repaired,$research,true);
         if(($report['facts']['status']??'')!=='PASS' || in_array($report['originality']['status']??'UNKNOWN',array('FAIL','UNKNOWN'),true)){
+            update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
+            update_post_meta($post_id,'_gnf5_seo_repair_note','Suggested SEO changes failed factual/originality review. Original Draft retained.');
             GNF5_Utils::log('SEO optimization '.$attempt.' rejected: quality evidence insufficient. Original Draft retained.','seo_warning',$cat_id);return false;
         }
         if(!hash_equals($token,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return false;
         $ids=(array)get_post_meta($post_id,'_gnf5_image_ids',true);
+        $content=self::compose_content($post_id,$repaired,$ids,$cat_id,GNF5_Utils::category_settings($cat_id),'');
+        if(!hash_equals($token,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return false;
         $saved=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$repaired['title'],'post_name'=>$repaired['slug'],'post_excerpt'=>$repaired['excerpt'],
-            'post_content'=>self::compose_content($post_id,$repaired,$ids,$cat_id,GNF5_Utils::category_settings($cat_id),''),'tags_input'=>$repaired['tags']),'SEO optimization');
+            'post_content'=>$content,'tags_input'=>$repaired['tags']),'SEO optimization');
         if(is_wp_error($saved))return false;
         $repaired['quality']=$report;update_post_meta($post_id,'_gnf5_article_data',$repaired);
         update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($repaired['content_html']));
         GNF5_SEO::save_rank_math($post_id,$repaired);GNF5_Publish::checkpoint($post_id);GNF5_Quality::store($post_id,$report);
+        update_post_meta($post_id,'_gnf5_seo_repair_note','Applied quality-checked SEO improvement '.$attempt.' of 3. Remaining items need review.');
         return true;
     }
 
@@ -746,6 +787,7 @@ class GNF5_Runner {
             'post_content'=>GNF5_SEO::build_gutenberg_content($article['content_html']).$manual,'tags_input'=>$article['tags']),'Explicit regeneration');
         if(is_wp_error($result))return $result;
         update_post_meta($post_id,'_gnf5_article_data',$article);delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
+        delete_post_meta($post_id,'_gnf5_seo_repair_stopped');delete_post_meta($post_id,'_gnf5_seo_repair_note');
         GNF5_Research::store($post_id,$research);GNF5_Topics::remember($research,$cat_id,'draft',$post_id);
         GNF5_SEO::save_rank_math($post_id,$article);GNF5_Publish::checkpoint($post_id);
         return self::finalize_post($post_id,$article,$research,$cat_id,$cs,false);
