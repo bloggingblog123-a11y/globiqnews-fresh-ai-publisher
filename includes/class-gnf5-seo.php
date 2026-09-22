@@ -262,7 +262,7 @@ class GNF5_SEO {
         // but remove generated hrefs; the plugin later inserts verified same-category internal
         // links and administrator-supplied trusted external links itself.
         $html=preg_replace('/<a\b[^>]*>(.*?)<\/a>/is','$1',$html);
-        $out['content_html']=$html;
+        $out['content_html']=self::public_article_html($html);
 
         $tags=is_array($d['tags']??null)?$d['tags']:array();
         $out['tags']=array();$seen_tags=array();
@@ -563,35 +563,76 @@ class GNF5_SEO {
         return $html.($related?'<h2>Related reading</h2><ul>'.implode('',$related).'</ul>':'');
     }
 
-    /** Only use administrator-approved URLs or researched primary sources supporting retained facts. */
+    /** Only for generated article data, never run over human-edited WordPress content. */
+    public static function public_article_html($html) {
+        if(!empty(GNF5_Utils::settings()['auto_source_links']))return $html;
+        // A writer must not bypass the public-source policy with a raw URL or appended bibliography.
+        $html=preg_replace('~<h([2-6])\b[^>]*>\s*(?:Sources?|References?|External links|Source credits?)\s*:?</h\1>.*?(?=<h[2-6]\b|$)~is','',$html);
+        $html=preg_replace('~<p\b[^>]*>\s*(?:<(?:strong|b)>\s*)?(?:Source|Source credit|Sources|References)\s*:.*?</p>~is','',$html);
+        return preg_replace('~https?://[^\s<>"\']+~iu','',$html);
+    }
+
+    /** Research visibility and manual editorial links are independent, explicit choices. */
     public static function insert_external_links($html,$post_id,$cat_id) {
+        $settings=GNF5_Utils::settings();$cs=GNF5_Utils::category_settings($cat_id,$settings);
         $research=get_post_meta($post_id,'_gnf5_research',true);$research=is_array($research)?$research:array();
-        $cs=GNF5_Utils::category_settings($cat_id);$candidates=array();$home=strtolower((string)wp_parse_url(home_url('/'),PHP_URL_HOST));
-        foreach((array)($research['primary_sources']??array()) as $primary){
+        $home=preg_replace('/^www\./','',strtolower((string)wp_parse_url(home_url('/'),PHP_URL_HOST)));
+        $candidates=array();$counts=array('manual'=>0,'research'=>0);$seen=array();
+        // Existing legacy research URLs remain private; they are not manual-link consent.
+        if(!empty($cs['manual_links_enabled']) && $cs['manual_links_max']>0){
+            $rows=(array)$cs['manual_links'];
+            // Stable partition: Preferred first, retaining the administrator's order within each group.
+            $rows=array_merge(array_values(array_filter($rows,function($r){return ($r['usage']??'optional')==='preferred';})),array_values(array_filter($rows,function($r){return ($r['usage']??'optional')!=='preferred';})));
+            $article_terms=self::link_terms(wp_strip_all_tags($html));
+            foreach($rows as $row){
+                if(empty($row['enabled']))continue;
+                $context=trim(($row['anchor']??'').' '.($row['note']??''));
+                $terms=self::link_terms($context);
+                $url_terms=self::link_terms(str_replace(array('-','_','/','.'),' ',urldecode((string)wp_parse_url($row['url']??'',PHP_URL_HOST).' '.(string)wp_parse_url($row['url']??'',PHP_URL_PATH))));
+                // Both the supplied context and URL identity must have support in this article.
+                // Conservative matching skips unclear/generic links rather than manufacturing a paragraph.
+                if(count(array_intersect($terms,$article_terms))<2 || !array_intersect($url_terms,$article_terms))continue;
+                $phrases=array_filter(array($row['anchor']??'', $row['note']??''),function($p){return GNF5_Utils::word_count($p)>=2 && !preg_match('~https?://~i',$p);});
+                $candidates[]=array('url'=>$row['url'],'phrases'=>$phrases,'kind'=>'manual');
+            }
+        }
+        if(!empty($settings['auto_source_links']))foreach((array)($research['primary_sources']??array()) as $primary){
             foreach((array)($research['sources']??array()) as $source){
                 if(($source['id']??'')!==($primary['source']??''))continue;
                 $phrases=array();foreach((array)($research['facts']??array()) as $fact){
                     if(in_array($source['id'],array_column((array)($fact['evidence']??array()),'source'),true))$phrases[]=$fact['subject'];
                 }
-                if($phrases)$candidates[]=array('url'=>$source['url'],'phrases'=>array_unique($phrases),'trusted'=>false);
+                if($phrases)$candidates[]=array('url'=>$source['url'],'phrases'=>array_unique($phrases),'kind'=>'research');
             }
         }
-        foreach(array_slice(GNF5_Utils::urls_from_lines($cs['external_links']??''),0,5) as $url)$candidates[]=array('url'=>$url,'phrases'=>array(),'trusted'=>true);
-        $count=0;$seen=array();
-        foreach(array_slice($candidates,0,7) as $candidate){
-            $url=GNF5_Utils::normalize_url($candidate['url']);$host=strtolower((string)wp_parse_url($url,PHP_URL_HOST));
-            if(!$url || !$host || preg_replace('/^www\./','',$host)===preg_replace('/^www\./','',$home) || isset($seen[$url]))continue;$seen[$url]=true;
-            if(strpos(html_entity_decode($html,ENT_QUOTES,'UTF-8'),$url)!==false)continue;
+        // Respect pre-existing links and avoid repeating a domain.
+        preg_match_all('/<a\b[^>]*href=["\']([^"\']+)/i',$html,$existing);
+        foreach($existing[1] as $href){$host=GNF5_Topics::publisher_key(html_entity_decode($href,ENT_QUOTES,'UTF-8'));if($host)$seen[$host]=true;}
+        foreach(array_slice($candidates,0,35) as $candidate){
+            $kind=$candidate['kind'];$limit=$kind==='manual'?(int)$cs['manual_links_max']:2;
+            if($counts[$kind]>=$limit)continue;
+            $url=GNF5_Utils::normalize_url($candidate['url']);$host=preg_replace('/^www\./','',strtolower((string)wp_parse_url($url,PHP_URL_HOST)));
+            $domain=GNF5_Topics::publisher_key($url);
+            if(!$url || !$host || $host===$home || isset($seen[$domain]))continue;
+            $proposed=self::link_phrase($html,$url,$candidate['phrases'],$inserted);
+            if(!$inserted)continue;
             $check=GNF5_Sources::test_external_link($url,false);
-            // A blocked/error URL is not described as verified and is not inserted.
             if(is_wp_error($check) || ($check['status']??'')!=='ok')continue;
-            $html=self::link_phrase($html,$url,$candidate['phrases'],$inserted);
-            if(!$inserted && $candidate['trusted']){
-                $html.='<p>Further information: <a href="'.esc_url($url).'">'.esc_html($host).'</a>.</p>';$inserted=true;
-            }
-            if($inserted && ++$count>=2)break;
+            $html=$proposed;$seen[$domain]=true;$counts[$kind]++;
         }
+        update_post_meta($post_id,'_gnf5_link_insertion',array('manual'=>$counts['manual'],'research'=>$counts['research'],
+            'auto_source_links'=>!empty($settings['auto_source_links']),'manual_links_enabled'=>!empty($cs['manual_links_enabled'])));
         return $html;
+    }
+
+    public static function link_report($post_id) {
+        $cats=wp_get_post_categories($post_id);$cs=GNF5_Utils::category_settings((int)($cats[0]??0));
+        $audit=self::anchor_audit(get_post_field('post_content',$post_id),$post_id);
+        $inserted=(array)get_post_meta($post_id,'_gnf5_link_insertion',true);
+        return array('Internal links'=>$audit['valid_internal'],'Automatic research/source links'=>!empty(GNF5_Utils::settings()['auto_source_links'])?'ON':'OFF',
+            'Category manual external links'=>!empty($cs['manual_links_enabled'])?'ON':'OFF','External links in article'=>$audit['external'],
+            'Manual links inserted at last composition'=>(int)($inserted['manual']??0),'Research links inserted at last composition'=>(int)($inserted['research']??0),
+            'Optional links'=>'No links is OK when disabled, empty or not relevant. Rank Math may still flag its own external-link checks.');
     }
 
     /** Local diagnostics, never a fabricated Rank Math score. Image checks are deliberately separate. */
@@ -632,51 +673,14 @@ class GNF5_SEO {
             'slug'=>get_post_field('post_name',$post_id),'content_html'=>get_post_field('post_content',$post_id));
         $checks=self::text_checks($d);$links=self::anchor_audit($d['content_html'],$post_id);
         $checks['internal_links']=array('status'=>$links['valid_internal']?'PASS':'REVIEW','message'=>'Relevant published internal links: '.$links['valid_internal'].'. If zero, enable internal links and ensure related published posts exist.');
-        $checks['external_links']=array('status'=>$links['external']?'PASS':'REVIEW','message'=>'External links: '.$links['external'].'. If zero, add useful trusted external URLs in category settings or research a relevant primary source.');
-        $checks['dofollow']=array('status'=>$links['dofollow_external']?'PASS':'REVIEW','message'=>'Followable external links: '.$links['dofollow_external'].'. Only validated editorial links are added.');
+        $checks['external_links']=array('status'=>$links['external']?'PASS':'OPTIONAL','message'=>'External links: '.$links['external'].'. Zero is allowed when disabled, empty or no suitable contextual link exists.');
+        $checks['dofollow']=array('status'=>$links['dofollow_external']?'PASS':'OPTIONAL','message'=>'Followable external links: '.$links['dofollow_external'].'. Only validated editorial links are added.');
         $checks['keyword_unique']=array('status'=>self::focus_keyword_is_unique($d['focus_keyword'],$post_id)?'PASS':'REVIEW','message'=>'A reused focus keyword needs editorial review; do not change the article topic simply to pass this check.');
         $checks['toc']=array('status'=>has_block('rank-math/toc-block',$d['content_html'])?'PASS':'REVIEW','message'=>'Table of contents is added when enabled and at least two headings exist.');
         return $checks;
     }
 
-    public static function external_links_section($links_text,$source_url=''){
-        $urls=GNF5_Utils::urls_from_lines($links_text);
-        $source=GNF5_Utils::normalize_url($source_url);
-        $safe=array();
-
-        foreach($urls as $url){
-            if($source&&GNF5_Utils::source_identity_url($url)===GNF5_Utils::source_identity_url($source))continue;
-            $url_host=preg_replace('/^www\./i','',(string)wp_parse_url($url,PHP_URL_HOST));
-            $home_host=preg_replace('/^www\./i','',(string)wp_parse_url(home_url('/'),PHP_URL_HOST));
-            if(strcasecmp($url_host,$home_host)===0)continue;
-
-            $check=GNF5_Sources::test_external_link($url,false);
-            if(is_wp_error($check))continue;
-            $status=(string)($check['status']??'');
-            if(!in_array($status,array('ok','restricted'),true))continue;
-
-            $safe[]=$url;
-            if(count($safe)>=2)break;
-        }
-
-        if(!$safe)return '';
-        $items='';
-        foreach($safe as $url){
-            $host=preg_replace('/^www\./i','',(string)wp_parse_url($url,PHP_URL_HOST));
-            $items.='<li><a href="'.esc_url($url).'">'.esc_html($host).'</a></li>';
-        }
-        return self::simple_heading('Useful Resources','useful-resources').self::simple_list($items);
-    }
-
-    private static function simple_heading($text,$anchor){
-        $html='<h2 class="wp-block-heading" id="'.esc_attr($anchor).'">'.esc_html($text).'</h2>';
-        return function_exists('serialize_block')?serialize_block(self::block_array('core/heading',array('anchor'=>$anchor),$html)):$html;
-    }
-
-    private static function simple_list($items){
-        $html='<ul class="wp-block-list">'.$items.'</ul>';
-        return function_exists('serialize_block')?serialize_block(self::simple_list_block($items)):$html;
-    }
+    public static function external_links_section($links_text,$source_url=''){ return ''; }
 
     public static function rank_math_toc_block_registered(){
         if(!class_exists('WP_Block_Type_Registry'))return true;

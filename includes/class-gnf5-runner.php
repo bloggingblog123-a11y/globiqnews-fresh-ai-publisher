@@ -369,10 +369,10 @@ class GNF5_Runner {
     }
 
     private static function compose_content($post_id,$article,$image_ids,$cat_id,$cs,$source_url) {
-        $html=GNF5_SEO::insert_internal_links($article['content_html'],$post_id,$cat_id);
+        $html=GNF5_SEO::insert_internal_links(GNF5_SEO::public_article_html($article['content_html']),$post_id,$cat_id);
         $html=GNF5_SEO::insert_external_links($html,$post_id,$cat_id);
         $content=GNF5_SEO::build_gutenberg_content($html);
-        if(GNF5_Utils::images_enabled($cat_id))$content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts']);
+        if(GNF5_Utils::images_enabled($cat_id))$content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts'],$cat_id);
         // No automatic source/URL dump. Research is available in the private report.
         return $content.GNF5_Images::manual_image_markup($post_id);
     }
@@ -400,7 +400,7 @@ class GNF5_Runner {
             if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during link validation. Your changes were preserved.');
             $updated=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'Draft finalization');
             if(is_wp_error($updated))throw new RuntimeException($updated->get_error_message());
-            if(GNF5_Utils::images_enabled($cat_id) && !empty($image_ids[0]) && !get_post_thumbnail_id($post_id))set_post_thumbnail($post_id,$image_ids[0]);
+            if(GNF5_Utils::images_enabled($cat_id) && !empty(GNF5_Utils::category_settings($cat_id)['image_featured']) && !empty($image_ids[0]) && !get_post_thumbnail_id($post_id))set_post_thumbnail($post_id,$image_ids[0]);
             GNF5_SEO::save_rank_math($post_id,$article);
             update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($article['content_html']));
             GNF5_Publish::checkpoint($post_id);
@@ -803,9 +803,9 @@ class GNF5_Runner {
         $ids=GNF5_Images::generate_for_post($article,$post_id,$cat_id,true);if(is_wp_error($ids))return $ids;
         if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during image generation; image insertion cancelled.');
         $content=get_post_field('post_content',$post_id);
-        if(!GNF5_Images::has_manual_inline($post_id))$content=GNF5_Images::insert_two_blocks($content,$ids,$article['image_alts']);
+        if(!GNF5_Images::has_manual_inline($post_id))$content=GNF5_Images::insert_two_blocks($content,$ids,$article['image_alts'],$cat_id);
         $result=self::update_post_checked(array('ID'=>$post_id,'post_content'=>$content),'Explicit image insertion');if(is_wp_error($result))return $result;
-        if(!get_post_thumbnail_id($post_id) && !empty($ids[0]))set_post_thumbnail($post_id,$ids[0]);
+        if(!empty(GNF5_Utils::category_settings($cat_id)['image_featured']) && !get_post_thumbnail_id($post_id) && !empty($ids[0]))set_post_thumbnail($post_id,$ids[0]);
         if($owned)GNF5_Publish::checkpoint($post_id);
         return true;
     }

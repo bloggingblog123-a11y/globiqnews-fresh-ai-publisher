@@ -1,6 +1,10 @@
-# GlobiqNews Fresh AI Publisher — 6.0.1
+# GlobiqNews Fresh AI Publisher — 6.0.2
 
-6.0.1 repairs non-image SEO and link handling. Local text checks and bounded AI improvement work without a background scoring service; the actual Rank Math score remains separate. Existing unchanged generated Drafts can use **Improve SEO & Links** in the editor report. See [validation and limitations](TEST-REPORT-6.0.1.md). Factual accuracy takes priority over making every indicator green.
+6.0.2 adds independent category **Save Image Settings** and **Save External Link Settings** controls. Automatic research/source links default OFF; manual external links also default OFF and empty. General saves preserve the two independent sections. See [validation and limitations](TEST-REPORT-6.0.2.md).
+
+In each category, choose image mode, featured/inline preferences and WebP (or optimized JPEG), then press **Save Image Settings**. Configure optional manual link rows and a maximum of 0–3, then press **Save External Link Settings**. A descriptive anchor/purpose and matching URL subject help conservative relevance matching; unclear or inaccessible links are skipped. Preferred links are tried first, never forced. No appended external-link list is created. The global research-link switch is in section 3; use a global Save Settings button for it. Internal links and private evidence research continue when external links are disabled.
+
+These controls affect new composition and explicit improvement/regeneration of unchanged generated Drafts. They do not mass-edit existing posts or remove manually uploaded media. Existing generated image files can be reused even if the new format preference changes; the selected format applies to new files.
 
 Discover topics, collect evidence, plan independent articles, and save original **Drafts for human review**. Version 6 replaces automatic article publication with manual publishing, including when Rank Math shows 80 or 100. Normal WordPress publishing remains available.
 

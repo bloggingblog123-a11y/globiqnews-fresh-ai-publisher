@@ -134,13 +134,14 @@ class GNF5_Quality {
                 'alt'=>$alt===''?'PENDING MANUAL':'PRESENT','mime'=>get_post_mime_type($id));
         }
         return array('mode'=>$on?'ORIGINAL GENERATION ON':'MANUAL','generation'=>$on?'ON':'OFF',
-            'featured'=>$thumb?(GNF5_Utils::valid_attachment($thumb)?'PRESENT':'FILE MISSING'):($on?'PENDING GENERATION':'PENDING MANUAL'),
-            'inline'=>$inline?'PRESENT':($on?'PENDING GENERATION':'PENDING MANUAL — OPTIONAL'),
+            'featured'=>$thumb?(GNF5_Utils::valid_attachment($thumb)?'PRESENT':'FILE MISSING'):($on && !empty(GNF5_Utils::category_settings($cat_id)['image_featured'])?'PENDING GENERATION':'PENDING MANUAL — OPTIONAL'),
+            'inline'=>$inline?'PRESENT':($on && !empty(GNF5_Utils::category_settings($cat_id)['image_inline'])?'PENDING GENERATION':'PENDING MANUAL — OPTIONAL'),
             'seo'=>$ids?'SEE ATTACHMENT CHECKS':'PENDING MANUAL','attachments'=>$checks);
     }
 
     public static function store($post_id,$report) {
         $cats=wp_get_post_categories($post_id);$report['images']=self::images($post_id,(int)($cats[0]??0));
+        $report['link_policy']=GNF5_SEO::link_report($post_id);
         $report['score']=GNF5_Publish::score($post_id);$report['seo_status']=get_post_meta($post_id,'_gnf5_seo_status',true) ?: 'NOT CHECKED';
         $report['content_hash']=hash('sha256',get_post_field('post_content',$post_id));
         update_post_meta($post_id,'_gnf5_quality_report',$report);

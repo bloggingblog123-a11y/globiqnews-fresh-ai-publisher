@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GlobiqNews Fresh AI Publisher
  * Description: Category-isolated research and original draft writing with optional GDELT discovery, quality reports, manual images or original WebP images, genuine Rank Math analysis and human publishing.
- * Version: 6.0.1
+ * Version: 6.0.2
  * Plugin URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Update URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Author: GlobiqNews
@@ -12,7 +12,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('GNF5_VERSION', '6.0.1');
+define('GNF5_VERSION', '6.0.2');
 define('GNF5_FILE', __FILE__);
 define('GNF5_DIR', plugin_dir_path(__FILE__));
 define('GNF5_URL', plugin_dir_url(__FILE__));
@@ -67,6 +67,7 @@ add_action('wp_ajax_gnf5_test_gemini', array('GNF5_Admin', 'ajax_test_gemini'));
 add_action('wp_ajax_gnf5_test_image', array('GNF5_Admin', 'ajax_test_image'));
 add_action('wp_ajax_gnf5_clear_log', array('GNF5_Admin', 'ajax_clear_log'));
 add_action('wp_ajax_gnf5_clear_lock', array('GNF5_Admin', 'ajax_clear_lock'));
+add_action('wp_ajax_gnf5_save_section', array('GNF5_Admin', 'ajax_save_section'));
 add_action('wp_ajax_gnf5_save_category', array('GNF5_Admin', 'ajax_save_category'));
 add_action('wp_ajax_gnf5_test_category_sources', array('GNF5_Admin', 'ajax_test_category_sources'));
 add_action('wp_ajax_gnf5_retry_post', array('GNF5_Admin', 'ajax_retry_post'));

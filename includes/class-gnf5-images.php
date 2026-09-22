@@ -26,6 +26,7 @@ class GNF5_Images {
         if (!GNF5_Utils::images_enabled($cat_id)) { return array(); }
         if (!$explicit && !GNF5_Publish::can_rewrite($post_id)) return new WP_Error('manual_edit','Article was edited manually. Image generation deferred to an explicit image action.');
 
+        $preferences=GNF5_Utils::category_settings($cat_id);
         $stored=get_post_meta($post_id,'_gnf5_image_ids',true);
         $stored=is_array($stored)?$stored:array();
         $ids=array();
@@ -34,6 +35,7 @@ class GNF5_Images {
         $manual_inline=self::has_manual_inline($post_id);
 
         for ($i=0;$i<2;$i++) {
+            if (empty($preferences[$i===0?'image_featured':'image_inline'])) continue;
             if (($i===0 && $manual_thumb) || ($i===1 && $manual_inline)) continue;
             if (!GNF5_Utils::images_enabled($cat_id)) return $ids;
             $existing=absint($stored[$i]??0);
@@ -54,7 +56,7 @@ class GNF5_Images {
 
             $id=self::generate_one_with_retry($article['title'].' image '.($i+1),$prompt,$cat_id);
             if (is_wp_error($id)) {
-                update_post_meta($post_id,'_gnf5_image_ids',$ids);
+                update_post_meta($post_id,'_gnf5_image_ids',array_replace($stored,$ids));
                 return new WP_Error('image_'.$i,$id->get_error_message(),array('partial_ids'=>$ids));
             }
 
@@ -72,13 +74,13 @@ class GNF5_Images {
                     $different_prompt=self::sanitize_text_only_prompt($prompt."\nMANDATORY: make this second image visibly different from image 1 in composition, viewpoint, framing, and subject arrangement.");
                     $id=self::generate_one_with_retry($article['title'].' image 2 alternate',$different_prompt,$cat_id);
                     if(is_wp_error($id)){
-                        update_post_meta($post_id,'_gnf5_image_ids',$ids);
+                        update_post_meta($post_id,'_gnf5_image_ids',array_replace($stored,$ids));
                         return new WP_Error('image_'.$i,$id->get_error_message(),array('partial_ids'=>$ids));
                     }
                     $f2=get_attached_file($id);$h2=($f2&&file_exists($f2))?@md5_file($f2):false;
                     if($h1&&$h2&&hash_equals($h1,$h2)){
                         wp_delete_attachment($id,true);
-                        update_post_meta($post_id,'_gnf5_image_ids',$ids);
+                        update_post_meta($post_id,'_gnf5_image_ids',array_replace($stored,$ids));
                         return new WP_Error('image_duplicate','Image provider returned the same image twice; second image will be retried during recovery.',array('partial_ids'=>$ids));
                     }
                 }
@@ -87,7 +89,7 @@ class GNF5_Images {
             $parented=wp_update_post(array('ID'=>$id,'post_parent'=>$post_id),true);
             if(is_wp_error($parented)){GNF5_Utils::log('Generated image #'.$id.' saved, but attachment parent assignment failed: '.$parented->get_error_message(),'warning',$cat_id);}
             $ids[$i]=absint($id);
-            update_post_meta($post_id,'_gnf5_image_ids',$ids); // checkpoint after every successful image
+            update_post_meta($post_id,'_gnf5_image_ids',array_replace($stored,$ids)); // retain disabled slots for later reuse
         }
 
         ksort($ids);
@@ -110,6 +112,8 @@ class GNF5_Images {
         return $ids;
     }
 
+    private static function encoder($cat_id=0) { return !empty(GNF5_Utils::category_settings($cat_id)['image_webp'])?'imagewebp':'imagejpeg'; }
+
     private static function retryable_error($error) {
         if(!is_wp_error($error))return false;
         $code=(string)$error->get_error_code();
@@ -129,7 +133,7 @@ class GNF5_Images {
 
     public static function generate_one_with_retry($title,$prompt,$cat_id=0) {
         if (!GNF5_Utils::images_enabled($cat_id)) return new WP_Error('images_disabled','Image generation is OFF; no image request was made.');
-        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable; no image API request was made.');
+        if (!function_exists(self::encoder($cat_id))) return new WP_Error('image_encoder_missing','Selected image encoder unavailable; no image API request was made.');
         $s=GNF5_Utils::settings();
         $provider=(string)$s['image_provider'];
         $last=new WP_Error('image','Image generation failed.');
@@ -149,23 +153,23 @@ class GNF5_Images {
         // Built-in fallback runs only after the configured provider has finished its retry cycle.
         if($provider!=='builtin' && !empty($s['builtin_fallback'])){
             GNF5_Utils::log('Primary image provider still failed after retry policy — using built-in original graphics fallback.','warning');
-            return self::builtin($title,$prompt);
+            return self::builtin($title,$prompt,$cat_id);
         }
         return $last;
     }
 
     public static function generate_one($title,$prompt,$cat_id=0) {
         if (!GNF5_Utils::images_enabled($cat_id)) return new WP_Error('images_disabled','Image generation is OFF; no image request was made.');
-        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable.');
+        if (!function_exists(self::encoder($cat_id))) return new WP_Error('image_encoder_missing','Selected image encoder unavailable.');
         $prompt=self::sanitize_text_only_prompt($prompt);
         $s=GNF5_Utils::settings();
         $provider=$s['image_provider'];
-        if($provider==='openai')return self::openai($title,$prompt);
-        if($provider==='webui')return self::webui($title,$prompt);
-        return self::builtin($title,$prompt);
+        if($provider==='openai')return self::openai($title,$prompt,$cat_id);
+        if($provider==='webui')return self::webui($title,$prompt,$cat_id);
+        return self::builtin($title,$prompt,$cat_id);
     }
 
-    private static function openai($title, $prompt) {
+    private static function openai($title, $prompt, $cat_id=0) {
         $s = GNF5_Utils::settings();
         $key = trim((string)$s['openai_api_key']);
         if (!$key) { return new WP_Error('openai_key','OpenAI API key is missing.'); }
@@ -175,7 +179,7 @@ class GNF5_Images {
             'n' => 1,
             'size' => $s['openai_size'],
             'quality' => $s['openai_quality'],
-            'output_format' => 'webp',
+            'output_format' => self::encoder($cat_id)==='imagewebp'?'webp':'jpeg',
         );
         $response = self::openai_request($payload, $key);
         if (is_wp_error($response) && $response->get_error_code() === 'openai_format') {
@@ -184,10 +188,10 @@ class GNF5_Images {
         }
         if (is_wp_error($response)) { return $response; }
         $bytes = $response['bytes']; $mime = $response['mime'];
-        $optimized = self::optimize_low_storage_webp($bytes);
-        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to optimized WebP.');
-        if ($optimized) { $bytes = $optimized; $mime = 'image/webp'; }
-        return self::save_bytes($bytes, $title, $mime);
+        $optimized = self::optimize_low_storage_webp($bytes,$cat_id);
+        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to the selected optimized format.');
+        if ($optimized) { $bytes = $optimized; $mime = self::encoder($cat_id)==='imagewebp'?'image/webp':'image/jpeg'; }
+        return self::save_bytes($bytes, $title, $mime, $cat_id);
     }
 
     private static function openai_request($payload, $key) {
@@ -230,7 +234,7 @@ class GNF5_Images {
         return new WP_Error('openai_no_image','OpenAI Image API returned no image data.');
     }
 
-    private static function webui($title, $prompt) {
+    private static function webui($title, $prompt, $cat_id=0) {
         $s = GNF5_Utils::settings();
         $base = rtrim((string)$s['webui_endpoint'],'/');
         if (!$base) { return new WP_Error('webui_endpoint','Self-hosted image server URL is missing.'); }
@@ -254,13 +258,13 @@ class GNF5_Images {
         if (strpos($b64,',')!==false) { $b64=substr($b64,strpos($b64,',')+1); }
         $bytes=base64_decode($b64,true); if(!$bytes){ return new WP_Error('webui_decode','Invalid image data returned by image server.'); }
         $mime=self::detect_mime($bytes); if(!$mime){return new WP_Error('webui_invalid_image','Image server returned non-image/unsupported data.');}
-        $optimized=self::optimize_low_storage_webp($bytes);
-        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to optimized WebP.');
-        if($optimized){$bytes=$optimized;$mime='image/webp';}
-        return self::save_bytes($bytes,$title,$mime);
+        $optimized=self::optimize_low_storage_webp($bytes,$cat_id);
+        if (!$optimized) return new WP_Error('webp_encode','Image could not be converted to the selected optimized format.');
+        if($optimized){$bytes=$optimized;$mime=self::encoder($cat_id)==='imagewebp'?'image/webp':'image/jpeg';}
+        return self::save_bytes($bytes,$title,$mime,$cat_id);
     }
 
-    private static function builtin($title, $prompt) {
+    private static function builtin($title, $prompt, $cat_id=0) {
         if (!function_exists('imagecreatetruecolor')) { return new WP_Error('gd','PHP GD extension is required for built-in fallback graphics.'); }
         $s = GNF5_Utils::settings();
         $w=1200; $h=675; $im=imagecreatetruecolor($w,$h); imagealphablending($im,true);
@@ -278,14 +282,14 @@ class GNF5_Images {
         }
         $dark=imagecolorallocatealpha($im,0,0,0,75); imagefilledrectangle($im,0,(int)($h*.78),$w,$h,$dark);
         ob_start();
-        if (function_exists('imagewebp')) { imagewebp($im,null,$s['webp_quality']); $mime='image/webp'; }
+        if (self::encoder($cat_id)==='imagewebp') { imagewebp($im,null,$s['webp_quality']); $mime=self::encoder($cat_id)==='imagewebp'?'image/webp':'image/jpeg'; }
         else { imagejpeg($im,null,$s['webp_quality']); $mime='image/jpeg'; }
         $bytes=ob_get_clean(); imagedestroy($im);
-        return self::save_bytes($bytes,$title,$mime);
+        return self::save_bytes($bytes,$title,$mime,$cat_id);
     }
 
-    private static function optimize_low_storage_webp($bytes) {
-        if (!function_exists('imagecreatefromstring') || !function_exists('imagecreatetruecolor') || !function_exists('imagecopyresampled') || !function_exists('imagewebp')) {
+    private static function optimize_low_storage_webp($bytes,$cat_id=0) {
+        if (!function_exists('imagecreatefromstring') || !function_exists('imagecreatetruecolor') || !function_exists('imagecopyresampled') || !function_exists(self::encoder($cat_id))) {
             return false;
         }
         $src = @imagecreatefromstring($bytes);
@@ -316,7 +320,7 @@ class GNF5_Images {
         if (!$ok) { imagedestroy($dst); return false; }
 
         ob_start();
-        imagewebp($dst, null, absint(GNF5_Utils::settings()['webp_quality'] ?? 72));
+        $encoder=self::encoder($cat_id);$encoder($dst, null, absint(GNF5_Utils::settings()['webp_quality'] ?? 72));
         $out = ob_get_clean();
         imagedestroy($dst);
         return $out ?: false;
@@ -336,8 +340,8 @@ class GNF5_Images {
         return '';
     }
 
-    private static function save_bytes($bytes, $title, $mime) {
-        if (!function_exists('imagewebp')) return new WP_Error('webp_missing','WebP encoder unavailable.');
+    private static function save_bytes($bytes, $title, $mime, $cat_id=0) {
+        if (!function_exists(self::encoder($cat_id))) return new WP_Error('image_encoder_missing','Selected image encoder unavailable.');
 
         if (!$bytes) { return new WP_Error('image_empty','Empty image data.'); }
         $detected=self::detect_mime($bytes);
@@ -389,7 +393,8 @@ class GNF5_Images {
         return function_exists('serialize_block') ? serialize_block($block) : $block['innerHTML'];
     }
 
-    public static function insert_two_blocks($content, $ids, $alts) {
+    public static function insert_two_blocks($content, $ids, $alts, $cat_id=0) {
+        if(empty(GNF5_Utils::category_settings($cat_id)['image_inline']))return $content;
         // Slot zero is featured only. Slot one is the single generated inline image.
         if (empty($ids[1]) || !function_exists('parse_blocks') || !GNF5_Utils::valid_attachment($ids[1])) return $content;
         if (strpos($content,'wp-image-'.absint($ids[1]))!==false) return $content;

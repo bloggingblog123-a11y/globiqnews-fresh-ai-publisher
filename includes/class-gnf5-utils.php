@@ -2,6 +2,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 class GNF5_Utils {
+    private static $section_save = false;
     private static $lock_tokens = array();
     private static $source_lock_tokens = array();
     public static function heartbeat_worker() {
@@ -39,6 +40,7 @@ class GNF5_Utils {
             'rankmath_enabled' => 1,
             'toc_enabled' => 1,
             'internal_links' => 1,
+            'auto_source_links' => 0,
             // New V5.7 instruction fields are blank by default and do not change previous behavior.
             'global_article_instructions' => '',
             'global_seo_instructions' => '',
@@ -104,7 +106,9 @@ class GNF5_Utils {
             'rss' => '',
             'urls' => '',
             'author_id' => 0,
-            'external_links' => '',
+            'external_links' => '', // Legacy research-only URLs; never implicit public-link consent.
+            'manual_links_enabled' => 0, 'manual_links_max' => 2, 'manual_links' => array(),
+            'image_featured' => 1, 'image_inline' => 1, 'image_webp' => 1,
             'instructions' => '',
             'image_mode' => 'global', 'gdelt_enabled' => 0, 'gdelt_keywords' => '',
             'gdelt_language' => 'english', 'gdelt_country' => '', 'gdelt_window' => '6h',
@@ -159,6 +163,7 @@ class GNF5_Utils {
         $out['rankmath_enabled'] = empty($input['rankmath_enabled']) ? 0 : 1;
         $out['toc_enabled'] = empty($input['toc_enabled']) ? 0 : 1;
         $out['internal_links'] = empty($input['internal_links']) ? 0 : 1;
+        $out['auto_source_links'] = empty($input['auto_source_links']) ? 0 : 1;
         $out['global_article_instructions'] = sanitize_textarea_field($input['global_article_instructions'] ?? '');
         $out['global_seo_instructions'] = sanitize_textarea_field($input['global_seo_instructions'] ?? '');
         $out['global_image_instructions'] = sanitize_textarea_field($input['global_image_instructions'] ?? '');
@@ -176,7 +181,9 @@ class GNF5_Utils {
                 // The completion sentinel is rendered at the END of every category row. If PHP
                 // max_input_vars truncates the POST before that sentinel, do not trust a partial
                 // hidden checkbox value such as enabled=0; preserve the previously saved row.
-                $merged_row = array_merge($old_row, $input['categories'][$id]);
+                $submitted = $input['categories'][$id];
+                if (!self::$section_save) foreach (self::section_keys() as $key) unset($submitted[$key]);
+                $merged_row = array_merge($old_row, $submitted);
                 unset($merged_row['_row_complete']);
                 $out['categories'][$id] = self::sanitize_category_row($merged_row);
             } elseif ($old_row) {
@@ -201,6 +208,12 @@ class GNF5_Utils {
             'author_id' => self::valid_author_id($row['author_id'] ?? 0),
             'external_links' => self::sanitize_url_lines($row['external_links'] ?? ''),
             'instructions' => sanitize_textarea_field($row['instructions'] ?? ''),
+            'manual_links_enabled' => empty($row['manual_links_enabled']) ? 0 : 1,
+            'manual_links_max' => min(3, max(0, (int)$row['manual_links_max'])),
+            'manual_links' => is_array($row['manual_links']) ? $row['manual_links'] : array(),
+            'image_featured' => empty($row['image_featured']) ? 0 : 1,
+            'image_inline' => empty($row['image_inline']) ? 0 : 1,
+            'image_webp' => empty($row['image_webp']) ? 0 : 1,
             'image_mode' => in_array($row['image_mode'] ?? 'global', array('global','on','off'), true) ? ($row['image_mode'] ?? 'global') : 'global',
             'gdelt_enabled' => empty($row['gdelt_enabled']) ? 0 : 1,
             'gdelt_keywords' => self::safe_substr(sanitize_text_field($row['gdelt_keywords'] ?? ''), 0, 500),
@@ -213,6 +226,52 @@ class GNF5_Utils {
             'max_candidates' => min(100, max(1, absint($row['max_candidates'] ?? 50))),
             'opportunity_threshold' => min(100, absint($row['opportunity_threshold'] ?? 60)),
         );
+    }
+
+    public static function section_keys($section = '') {
+        $images=array('image_mode','image_featured','image_inline','image_webp');
+        $links=array('manual_links_enabled','manual_links_max','manual_links');
+        return $section==='images' ? $images : ($section==='links' ? $links : array_merge($images,$links,array('external_links')));
+    }
+
+    public static function section_revision($row,$section) {
+        return hash('sha256',wp_json_encode(array_intersect_key($row,array_flip(self::section_keys($section)))));
+    }
+
+    /** Merge only the permitted fields into the latest settings, never the stale page snapshot. */
+    public static function save_category_section($cat,$section,$values,$revision) {
+        $settings=self::settings();$row=self::category_settings($cat,$settings);
+        if(!hash_equals(self::section_revision($row,$section),(string)$revision))
+            return new WP_Error('stale_settings','These settings changed in another tab. Reload this page before saving.');
+        $row=array_merge($row,array_intersect_key($values,array_flip(self::section_keys($section))));
+        $settings['categories'][$cat]=self::sanitize_category_row($row);
+        $expected=self::section_revision($settings['categories'][$cat],$section);
+        $settings['categories'][$cat]['_row_complete']=1;
+        self::$section_save=true;
+        try { update_option(GNF5_OPTION,$settings,false); }
+        finally { self::$section_save=false; }
+        $saved=self::category_settings($cat);
+        if(!hash_equals($expected,self::section_revision($saved,$section)))return new WP_Error('save_failed','Settings could not be saved. Reload the page and try again.');
+        return self::section_revision($saved,$section);
+    }
+
+    public static function sanitize_manual_links($rows) {
+        if(!is_array($rows) || count($rows)>30)return new WP_Error('links','Use no more than 30 manual link entries.');
+        $out=array();$ids=array();
+        foreach($rows as $row){
+            if(!is_array($row))return new WP_Error('links','Invalid manual link entry.');
+            foreach($row as $value)if(!is_scalar($value))return new WP_Error('links','Invalid manual link field.');
+            $url=self::normalize_url(trim((string)($row['url']??'')));
+            if(!$url || !filter_var($url,FILTER_VALIDATE_URL))return new WP_Error('link_url','Every manual link needs a valid public HTTP or HTTPS URL. Remove incomplete entries before saving.');
+            $host=(string)wp_parse_url($url,PHP_URL_HOST);
+            if(strpos($host,'.')===false || preg_match('/\.(?:test|localhost|lan|home|invalid)$/i',$host) || (preg_match('/[.\d]$/',$host) && !filter_var($host,FILTER_VALIDATE_IP)))return new WP_Error('link_url','Local or private URLs are not allowed.');
+            foreach((array)gethostbynamel($host) as $ip)if(!filter_var($ip,FILTER_VALIDATE_IP,FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE))return new WP_Error('link_url','URLs resolving to private or local addresses are not allowed.');
+            $id=sanitize_key($row['id']??'');if(!$id || isset($ids[$id]))$id=wp_generate_uuid4();$ids[$id]=true;
+            $out[]=array('id'=>$id,'url'=>$url,'anchor'=>self::safe_substr(sanitize_text_field($row['anchor']??''),0,160),
+                'note'=>self::safe_substr(sanitize_textarea_field($row['note']??''),0,500),'enabled'=>empty($row['enabled'])?0:1,
+                'usage'=>($row['usage']??'optional')==='preferred'?'preferred':'optional');
+        }
+        return $out;
     }
 
     public static function fallback_author_id() {

@@ -83,7 +83,7 @@ class GNF5_Admin {
                         <label>Optional Backup Gemini Model<input type="text" name="<?php echo esc_attr(GNF5_OPTION); ?>[gemini_backup_model]" value="<?php echo esc_attr($s['gemini_backup_model']); ?>"><small>Used only after the primary model fails its automatic retries.</small></label>
                     </div>
                     <p><button type="submit" class="button button-primary">Save Settings</button> <button type="button" class="button gnf5-test-gemini">Test Gemini Connection</button></p>
-                    <p class="description">Saves your Gemini API key, text model, backup model and all other settings on this page. Save changes before testing the connection.</p>
+                    <p class="description">Saves global and general category settings. Use the separate category buttons for Images and Manual External Links. Save changes before testing the connection.</p>
                     <div class="gnf5-rule"><strong>Fault tolerance:</strong> Each Gemini stage makes at most 3 requests total, including an optional backup model.</div>
                     <div class="gnf5-rule"><strong>Preferred article length:</strong> 1000–1200 words when supported by research. Shorter useful articles are allowed; accuracy comes first.</div>
                 </section>
@@ -123,6 +123,8 @@ class GNF5_Admin {
                         <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[toc_enabled]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[toc_enabled]" value="1" <?php checked($s['toc_enabled']); ?>> Add real Rank Math Table of Contents block</label>
                         <label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[internal_links]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[internal_links]" value="1" <?php checked($s['internal_links']); ?>> Add real same-category internal links when available</label>
                     </div>
+                    <p><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_source_links]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[auto_source_links]" value="1" <?php checked($s['auto_source_links']); ?>> Automatically Insert Research/Source Links in Article</label></p>
+                    <p class="description">OFF by default. Research URLs and evidence remain in private reports. Category manual external links and internal links are controlled separately. Applies when composing new or regenerated drafts; existing articles are not edited by saving settings.</p>
                     <div class="gnf5-rule">Use accurate titles, natural keywords, relevant headings and useful links. There is no mandatory power word, sentiment, year, FAQ, table or keyword-density target. Rank Math remains responsible for canonical URLs, schema and sitemaps. Missing scores are shown as not checked.</div>
                 </section>
 
@@ -138,7 +140,7 @@ class GNF5_Admin {
                         <label>Image Size<select name="<?php echo esc_attr(GNF5_OPTION); ?>[openai_size]"><option value="1536x1024" <?php selected($s['openai_size'],'1536x1024'); ?>>1536×1024 landscape</option><option value="1024x1024" <?php selected($s['openai_size'],'1024x1024'); ?>>1024×1024 square</option><option value="1024x1536" <?php selected($s['openai_size'],'1024x1536'); ?>>1024×1536 portrait</option></select></label>
                         <label>Low-Storage WebP Quality<input type="number" min="50" max="90" name="<?php echo esc_attr(GNF5_OPTION); ?>[webp_quality]" value="<?php echo esc_attr($s['webp_quality']); ?>"></label>
                     </div>
-                    <p class="description">Every successful generated image is optimized locally to 1200×675 WebP when supported. If Image 1 succeeds but Image 2 fails, Image 1 is checkpointed and Retry generates only the missing image.</p>
+                    <p class="description">New generated images are optimized locally to 1200×675. Each category chooses WebP (default) or JPEG. If Image 1 succeeds but Image 2 fails, Image 1 is checkpointed and Retry generates only the missing image.</p>
                     <details><summary>Self-hosted SD / FLUX settings</summary><div class="gnf5-grid3 gnf5-details"><label>WebUI Base URL<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_endpoint]" value="<?php echo esc_attr($s['webui_endpoint']); ?>"></label><label>Optional Bearer Token<input type="password" name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_api_key]" value="" placeholder="Leave blank to keep the saved key" autocomplete="new-password"></label><label>Optional Checkpoint<input name="<?php echo esc_attr(GNF5_OPTION); ?>[webui_model]" value="<?php echo esc_attr($s['webui_model']); ?>"></label></div></details>
                     <p><label><input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[builtin_fallback]" value="0"><input type="checkbox" name="<?php echo esc_attr(GNF5_OPTION); ?>[builtin_fallback]" value="1" <?php checked($s['builtin_fallback']); ?>> Use built-in original graphics if the primary image provider still fails</label></p>
                     <p><button type="button" class="button gnf5-test-image">Test Image Generator</button></p>
@@ -176,11 +178,11 @@ class GNF5_Admin {
                                 <label>Automatic Timing<select name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][interval]"><?php self::interval_options($cs['interval']); ?></select></label>
                                 <label>Author for this Category<select name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][author_id]"><option value="0">Select an author (required)</option><?php foreach($users as $u): ?><option value="<?php echo absint($u->ID); ?>" <?php selected($cs['author_id'],$u->ID); ?>><?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_login); ?>)</option><?php endforeach; ?></select></label>
                             </div>
-                            <?php self::category_fields($cat,$cs); ?>
+                            <?php self::category_fields($cat,$cs); self::category_sections($cat,$cs); ?>
                             <div class="gnf5-grid3">
                                 <label><?php echo esc_html($cat->name); ?> — RSS / Atom Feeds<small>Optional · one feed URL per line · WordPress parser + raw XML fallback</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][rss]"><?php echo esc_textarea($cs['rss']); ?></textarea></label>
                                 <label><?php echo esc_html($cat->name); ?> — Source URLs<small>One URL per line · category/listing page OR direct article URL; mode is detected automatically</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][urls]"><?php echo esc_textarea($cs['urls']); ?></textarea></label>
-                                <label><?php echo esc_html($cat->name); ?> — Trusted External DoFollow Links<small>Optional primary/research references for this category. Links are checked independently; inaccessible links are not treated as verified. Research sources are stored privately.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][external_links]"><?php echo esc_textarea($cs['external_links']); ?></textarea></label>
+
                             </div>
                             <label><?php echo esc_html($cat->name); ?> — Category Custom Instructions<small>Combined with Global Instructions only for this category.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][instructions]" placeholder="Example: Use a match-report style for Sports, but keep all locked factual and SEO rules."><?php echo esc_textarea($cs['instructions']); ?></textarea></label>
                             <input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][_row_complete]" value="1">
@@ -192,7 +194,7 @@ class GNF5_Admin {
                 </section>
 
                 <details class="gnf5-card"><summary>Protected writing instruction</summary><p><?php echo esc_html(GNF5_Writer::protected_instruction()); ?></p></details>
-                <?php submit_button('Save All V'.GNF5_VERSION.' Settings'); ?>
+                <?php submit_button('Save Global & General Category Settings'); ?>
             </form>
 
             <section class="gnf5-card">
@@ -300,17 +302,63 @@ class GNF5_Admin {
             'enabled'=>empty($_POST['enabled'])?0:1,'post_limit'=>absint($_POST['post_limit']??1),
             'interval'=>sanitize_key($_POST['interval']??'hourly'),'author_id'=>absint($_POST['author_id']??0),
             'rss'=>wp_unslash($_POST['rss']??''),'urls'=>wp_unslash($_POST['urls']??''),
-            'external_links'=>wp_unslash($_POST['external_links']??''),'instructions'=>wp_unslash($_POST['instructions']??''),
+            'instructions'=>wp_unslash($_POST['instructions']??''),
         );
-        foreach(array('image_mode','gdelt_enabled','gdelt_keywords','gdelt_language','gdelt_country','gdelt_window','gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold') as $key) { if(isset($_POST[$key]) && is_scalar($_POST[$key]))$row[$key]=wp_unslash($_POST[$key]); }
+        foreach(array('gdelt_enabled','gdelt_keywords','gdelt_language','gdelt_country','gdelt_window','gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold') as $key) { if(isset($_POST[$key]) && is_scalar($_POST[$key]))$row[$key]=wp_unslash($_POST[$key]); }
+        $row=array_intersect_key($row,$_POST);
         $settings=GNF5_Utils::settings();
         $row=array_merge(GNF5_Utils::category_settings($cat,$settings),$row);
         $settings['categories'][$cat]=GNF5_Utils::sanitize_category_row($row);
+        $settings['categories'][$cat]['_row_complete']=1;
         // update_option triggers settings_updated(), which rebuilds schedules once.
         update_option(GNF5_OPTION,$settings,false);
         $name=get_cat_name($cat)?:('Category '.$cat);
         GNF5_Utils::log($name.' settings saved separately.','success',$cat);
         wp_send_json_success(array('message'=>$name.' settings saved.','category'=>$settings['categories'][$cat]));
+    }
+
+    public static function ajax_save_section() {
+        self::guard();$cat=absint($_POST['cat_id']??0);$section=sanitize_key($_POST['section']??'');
+        if(!GNF5_Utils::category_valid($cat) || !in_array($section,array('images','links'),true))wp_send_json_error(array('message'=>'Invalid category or settings section.'),400);
+        $values=json_decode(wp_unslash($_POST['values']??''),true);
+        if(!is_array($values) || array_diff(GNF5_Utils::section_keys($section),array_keys($values)))wp_send_json_error(array('message'=>'Incomplete settings. Nothing was saved.'),400);
+        foreach($values as $key=>$value)if($key!=='manual_links' && !is_scalar($value))wp_send_json_error(array('message'=>'Invalid settings value.'),400);
+        if($section==='links'){
+            $links=GNF5_Utils::sanitize_manual_links($values['manual_links']);
+            if(is_wp_error($links))wp_send_json_error(array('message'=>$links->get_error_message()),400);
+            $values['manual_links']=$links;
+        }elseif(!in_array($values['image_mode'],array('global','on','off'),true))wp_send_json_error(array('message'=>'Invalid image mode.'),400);
+        $result=GNF5_Utils::save_category_section($cat,$section,$values,wp_unslash($_POST['revision']??''));
+        if(is_wp_error($result))wp_send_json_error(array('message'=>$result->get_error_message()),409);
+        $label=$section==='images'?'image':'external link';
+        wp_send_json_success(array('message'=>get_cat_name($cat).' '.$label.' settings saved successfully.','revision'=>$result));
+    }
+
+    public static function manual_link_row($row=array()) {
+        $row=wp_parse_args($row,array('id'=>'','url'=>'','anchor'=>'','note'=>'','enabled'=>1,'usage'=>'optional'));
+        echo '<div class="gnf6-link-row"><input type="hidden" data-field="id" value="'.esc_attr($row['id']).'"><div class="gnf5-grid3">';
+        foreach(array('url'=>'Public URL','anchor'=>'Anchor text (optional)','note'=>'Purpose / relevant topic') as $key=>$label)
+            echo '<label>'.esc_html($label).'<input type="text" '.($key==='url'?'inputmode="url" ':'').'data-field="'.esc_attr($key).'" value="'.esc_attr($row[$key]).'"></label>';
+        echo '</div><p><label><input type="checkbox" data-field="enabled" '.checked($row['enabled'],1,false).'> Enabled</label> <label>Usage <select data-field="usage"><option value="optional" '.selected($row['usage'],'optional',false).'>Optional</option><option value="preferred" '.selected($row['usage'],'preferred',false).'>Preferred</option></select></label> <button type="button" class="button gnf6-link-up">Move up</button> <button type="button" class="button gnf6-link-delete">Delete link</button></p></div>';
+    }
+
+    public static function category_sections($cat,$cs) {
+        foreach(array('images'=>'Images','links'=>'Manual External Links') as $section=>$label){
+            echo '<fieldset class="gnf6-section" data-section="'.esc_attr($section).'" data-cat="'.absint($cat->term_id).'" data-revision="'.esc_attr(GNF5_Utils::section_revision($cs,$section)).'"><legend><strong>'.esc_html($cat->name.' — '.$label).'</strong></legend>';
+            if($section==='images'){
+                echo '<div class="gnf5-grid3"><label>Image generation<select data-field="image_mode">';
+                foreach(array('global'=>'Use Global','on'=>'ON','off'=>'OFF') as $value=>$text)echo '<option value="'.esc_attr($value).'" '.selected($cs['image_mode'],$value,false).'>'.esc_html($text).'</option>';
+                echo '</select></label>';
+                foreach(array('image_featured'=>'Generate featured image','image_inline'=>'Generate one inline image','image_webp'=>'Save new images as WebP (OFF uses optimized JPEG)') as $key=>$text)
+                    echo '<label><input type="checkbox" data-field="'.esc_attr($key).'" '.checked($cs[$key],1,false).'> '.esc_html($text).'</label>';
+                echo '</div><p class="description">Uses the saved global provider and quality. Existing attachments and your manually uploaded images are preserved.</p>';
+            }else{
+                echo '<p><label><input type="checkbox" data-field="manual_links_enabled" '.checked($cs['manual_links_enabled'],1,false).'> Enable manual external links for this category</label></p><label>Maximum links per article (0–3)<input type="number" min="0" max="3" data-field="manual_links_max" value="'.absint($cs['manual_links_max']).'"></label><p class="description">Only relevant, reachable links with suitable inline anchor text are inserted. Preferred links are considered first, never forced. An empty list or no relevant links is OK. Use a descriptive anchor or purpose such as Samsung Galaxy support to help match the article.</p><div class="gnf6-link-list">';
+                foreach($cs['manual_links'] as $row)self::manual_link_row($row);
+                echo '</div><template class="gnf6-link-template">';self::manual_link_row();echo '</template><p><button type="button" class="button gnf6-link-add">Add link</button></p>';
+            }
+            echo '<button type="button" class="button button-primary gnf6-save-section">'.($section==='images'?'Save Image Settings':'Save External Link Settings').'</button><p class="gnf6-section-result" role="status" aria-live="polite"></p></fieldset>';
+        }
     }
 
     public static function ajax_test_category_sources(){
@@ -434,9 +482,7 @@ class GNF5_Admin {
     }
     public static function category_fields($cat,$cs) {
         $prefix=GNF5_OPTION.'[categories]['.(int)$cat->term_id.']';
-        echo '<div class="gnf5-grid3"><label>Images<select name="'.esc_attr($prefix.'[image_mode]').'">';
-        foreach(array('global'=>'Use global setting','on'=>'ON — original images','off'=>'OFF — use my own images') as $v=>$label)echo '<option value="'.esc_attr($v).'" '.selected($cs['image_mode'],$v,false).'>'.esc_html($label).'</option>';
-        echo '</select></label><label><input type="hidden" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="0"><input type="checkbox" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="1" '.checked($cs['gdelt_enabled'],1,false).'> Enable GDELT topic discovery</label></div><div class="gnf5-grid3">';
+        echo '<div class="gnf5-grid3"><label><input type="hidden" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="0"><input type="checkbox" name="'.esc_attr($prefix.'[gdelt_enabled]').'" value="1" '.checked($cs['gdelt_enabled'],1,false).'> Enable GDELT topic discovery</label></div><div class="gnf5-grid3">';
         $fields=array('gdelt_keywords'=>'Topic keywords (comma-separated)','gdelt_language'=>'Language (e.g. english)','gdelt_country'=>'Source country (e.g. india; blank = all)',
             'gdelt_results'=>'GDELT results per scan','gdelt_interval'=>'GDELT cache/scan interval (minutes)','min_sources'=>'Minimum independent sources for GDELT',
             'max_candidates'=>'Maximum candidates per run','opportunity_threshold'=>'Topic Opportunity Score target');
@@ -485,6 +531,7 @@ class GNF5_Admin {
             'Added Value Score'=>isset($report['added_value']['score'])?$report['added_value']['score'].' / 100':'NOT CHECKED',
             'Rank Math score'=>$score===null?'NOT CHECKED':$score.' / 100','SEO optimizations'=>absint(get_post_meta($post->ID,'_gnf5_seo_repair_attempts',true)).' / 3',
             'Image generation'=>$images['generation'],'Featured image'=>$images['featured'],'Inline image'=>$images['inline'],'Image SEO'=>$images['seo']);
+        $rows=array_merge($rows,GNF5_SEO::link_report($post->ID));
         echo '<table class="widefat striped"><tbody>';foreach($rows as $label=>$value)echo '<tr><th>'.esc_html($label).'</th><td>'.esc_html((string)$value).'</td></tr>';echo '</tbody></table>';
         echo '<p>Originality and quality scores are internal comparisons and AI-assisted evidence reviews. They are not plagiarism-proof, independent human fact checks or search-engine approval scores.</p>';
         foreach((array)($report['warnings']??array()) as $warning)echo '<p>'.esc_html($warning).'</p>';
