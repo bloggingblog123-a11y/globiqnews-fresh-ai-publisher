@@ -24,6 +24,38 @@
         request.always(function(){button.prop('disabled',false);});
     });
 
+    // Subsection inputs intentionally have no form names: only their own AJAX save can persist them.
+    function sectionValues(box){
+        var result={}, links=[];
+        box.find('[data-field]').each(function(){
+            var input=$(this);if(input.closest('.gnf6-link-row').length)return;
+            result[input.data('field')]=input.is(':checkbox')?(input.is(':checked')?1:0):input.val();
+        });
+        if(box.data('section')==='links'){
+            box.find('.gnf6-link-list .gnf6-link-row').each(function(){var row={};$(this).find('[data-field]').each(function(){var i=$(this);row[i.data('field')]=i.is(':checkbox')?(i.is(':checked')?1:0):i.val();});links.push(row);});
+            result.manual_links=links;
+        }
+        return result;
+    }
+    function dirtySection(box){box.data('dirty',true).find('.gnf6-section-result').text('Unsaved changes — use this section’s Save button.');}
+    $(document).on('input change','.gnf6-section [data-field]',function(){dirtySection($(this).closest('.gnf6-section'));});
+    $(document).on('click','.gnf6-link-add',function(){var box=$(this).closest('.gnf6-section');box.find('.gnf6-link-list').append(box.find('template').html());box.find('.gnf6-link-row').last().find('[data-field="id"]').val('link-'+Date.now()+'-'+Math.random().toString(36).slice(2));dirtySection(box);});
+    $(document).on('click','.gnf6-link-delete',function(){var box=$(this).closest('.gnf6-section');$(this).closest('.gnf6-link-row').remove();dirtySection(box);});
+    $(document).on('click','.gnf6-link-up',function(){var row=$(this).closest('.gnf6-link-row'),box=row.closest('.gnf6-section');row.insertBefore(row.prev('.gnf6-link-row'));dirtySection(box);});
+    $(document).on('click','.gnf6-save-section',function(){
+        var button=$(this),box=button.closest('.gnf6-section'),values=JSON.stringify(sectionValues(box));
+        button.prop('disabled',true);box.find('.gnf6-section-result').text('Saving…');
+        var request=call('gnf5_save_section',{cat_id:box.data('cat'),section:box.data('section'),revision:box.attr('data-revision'),values:values});
+        request.done(function(r){
+            box.find('.gnf6-section-result').text(r&&r.data&&r.data.message||'Could not save settings.');
+            if(r&&r.success){box.attr('data-revision',r.data.revision);box.data('dirty',JSON.stringify(sectionValues(box))!==values);if(box.data('dirty'))box.find('.gnf6-section-result').append(' Newer edits still need saving.');}
+        }).fail(function(xhr){box.find('.gnf6-section-result').text(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message||'Save failed. Your changes are still unsaved.');}).always(function(){button.prop('disabled',false);});
+    });
+    $(window).on('beforeunload',function(event){
+        var dirty=false;$('.gnf6-section').each(function(){if($(this).data('dirty'))dirty=true;});
+        if(dirty){event.preventDefault();event.originalEvent.returnValue='';return '';}
+    });
+
     function categoryFormData(cat){
         var box=$('#gnf5-cat-'+cat);
         if(!box.length)return null;
@@ -36,9 +68,8 @@
             author_id:get('author_id').val()||0,
             rss:get('rss').val()||'',
             urls:get('urls').val()||'',
-            external_links:get('external_links').val()||'',
             instructions:get('instructions').val()||'',
-            image_mode:get('image_mode').val()||'global',gdelt_enabled:box.find('input[type=checkbox][name$="[gdelt_enabled]"]').is(':checked')?1:0,
+            gdelt_enabled:box.find('input[type=checkbox][name$="[gdelt_enabled]"]').is(':checked')?1:0,
             gdelt_keywords:get('gdelt_keywords').val()||'',gdelt_language:get('gdelt_language').val()||'',gdelt_country:get('gdelt_country').val()||'',
             gdelt_window:get('gdelt_window').val()||'6h',gdelt_results:get('gdelt_results').val()||50,gdelt_interval:get('gdelt_interval').val()||60,
             min_sources:get('min_sources').val()||2,max_candidates:get('max_candidates').val()||50,opportunity_threshold:get('opportunity_threshold').val()||60

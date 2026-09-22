@@ -1,7 +1,7 @@
 === GlobiqNews Fresh AI Publisher ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 6.0.1
+Stable tag: 6.0.2
 
 Topic discovery, evidence-backed research, original articles and optional images saved as Drafts for human review.
 
@@ -10,7 +10,9 @@ GDELT, RSS/Atom, category URLs and manual URLs lead to structured facts, indepen
 planning, original writing and private quality reports. The final writer does not
 receive full source articles. No score or plugin task automatically publishes.
 Images default OFF on new installations. Existing image choices and credentials
-are preserved. Manual images are protected. Optional original images use WebP.
+are preserved. Manual images are protected. Optional original images use per-category WebP or JPEG preferences.
+Category Images and Manual External Links have separate Save buttons. Automatic
+research/source links and category manual links default OFF. Research remains private.
 Rank Math metadata and its genuine Free 1.0.278 analyzer remain supported; the
 preferred 80/100 target is for optimization only, with at most three improvements.
 Quality scores are internal heuristics and AI reviews requiring human verification.
@@ -31,13 +33,13 @@ Rank Math PRO and custom editor JavaScript scoring extensions are not verified.
 == Updates ==
 Only published stable GitHub releases with the exact installable ZIP are offered.
 Enable plugin auto-updates in WordPress to receive future published code updates.
-Version 6.0.1 is delivered as a review candidate, not automatically released.
+Version 6.0.2 is delivered as a review candidate, not automatically released.
 
 == Changelog ==
-= 6.0.1 =
+= 6.0.2 =
 Research-first original writing, GDELT, quality reports, protected manual images,
 bounded queues and retries, preserved settings, and Draft-only manual publishing.
 = 5.31.0 =
 Added authenticated optional remote analysis for shared hosting.
 = 5.29.0 =
-Added GitHub plugin updates. Earlier automatic article publishing is retired in 6.0.1.
+Added GitHub plugin updates. Earlier automatic article publishing is retired in 6.0.2.

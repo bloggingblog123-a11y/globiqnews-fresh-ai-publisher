@@ -13,3 +13,5 @@
 #gnf5-bulk-recovery-state{font-weight:600;color:#50575e}
 .gnf5-recovery-select-label{display:inline-flex!important;align-items:center;gap:5px;margin:0 10px 6px 0;font-weight:500!important}
 .gnf5-recovery-select-label input{margin:0}
+
+.gnf6-section{margin:20px 0;padding:18px;border:1px solid #ccd0d4;background:#fafbfc}.gnf6-section legend{font-size:16px}.gnf6-link-row{padding:12px;margin:12px 0;border:1px solid #dcdcde;background:white}.gnf6-section-result{min-height:1.5em}
