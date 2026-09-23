@@ -8,6 +8,13 @@ class GNF5_Admin {
 
     public static function register_settings() {
         register_setting('gnf5_group',GNF5_OPTION,array('sanitize_callback'=>array('GNF5_Utils','sanitize_settings')));
+        // options.php persists the full settings form after admin_init. Hold the same lock
+        // as category AJAX saves through that write and release it at request shutdown.
+        if(($_SERVER['REQUEST_METHOD']??'')==='POST' && ($_POST['option_page']??'')==='gnf5_group' && ($_POST['action']??'')==='update'){
+            if(!current_user_can('manage_options'))wp_die('Permission denied.','Permission denied',array('response'=>403));
+            check_admin_referer('gnf5_group-options');
+            if(!GNF5_Utils::acquire_settings_lock())wp_die('Another settings save is in progress. Nothing from this form was saved. Go back and retry after the other save finishes.','Settings busy',array('response'=>409,'back_link'=>true));
+        }
     }
 
     public static function settings_updated($old,$new) {
@@ -306,15 +313,11 @@ class GNF5_Admin {
         );
         foreach(array('gdelt_enabled','gdelt_keywords','gdelt_language','gdelt_country','gdelt_window','gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold') as $key) { if(isset($_POST[$key]) && is_scalar($_POST[$key]))$row[$key]=wp_unslash($_POST[$key]); }
         $row=array_intersect_key($row,$_POST);
-        $settings=GNF5_Utils::settings();
-        $row=array_merge(GNF5_Utils::category_settings($cat,$settings),$row);
-        $settings['categories'][$cat]=GNF5_Utils::sanitize_category_row($row);
-        $settings['categories'][$cat]['_row_complete']=1;
-        // update_option triggers settings_updated(), which rebuilds schedules once.
-        update_option(GNF5_OPTION,$settings,false);
+        $result=GNF5_Utils::save_category_section($cat,'general',$row);
+        if(is_wp_error($result))wp_send_json_error(array('message'=>$result->get_error_message()),409);
         $name=get_cat_name($cat)?:('Category '.$cat);
         GNF5_Utils::log($name.' settings saved separately.','success',$cat);
-        wp_send_json_success(array('message'=>$name.' settings saved.','category'=>$settings['categories'][$cat]));
+        wp_send_json_success(array('message'=>$name.' settings saved.','category'=>GNF5_Utils::category_settings($cat)));
     }
 
     public static function ajax_save_section() {
@@ -383,19 +386,28 @@ class GNF5_Admin {
                 $parts[]='SOURCE OK: '.$u.' — '.count($x).' candidate(s) via '.implode(', ',array_keys($methods)).'.';
             }
         }
-        foreach(GNF5_Utils::urls_from_lines($cs['external_links']) as $u){
+        $external=array();
+        foreach(GNF5_Utils::urls_from_lines($cs['external_links']) as $u)$external[$u]='LEGACY RESEARCH LINK';
+        if(empty($cs['manual_links_enabled']))$parts[]='MANUAL EXTERNAL LINKS OFF — configured entries were not requested.';
+        else foreach((array)$cs['manual_links'] as $entry){
+            if(empty($entry['enabled']))continue;
+            $u=GNF5_Utils::normalize_url($entry['url']??'');
+            if($u)$external[$u]='MANUAL EXTERNAL LINK';
+        }
+        if(!empty($cs['manual_links_enabled']) && !array_filter((array)$cs['manual_links'],function($entry){return !empty($entry['enabled']);}))$parts[]='No enabled manual external links are saved for this category.';
+        foreach($external as $u=>$label){
             $x=GNF5_Sources::test_external_link($u,true);
             if(is_wp_error($x)){
-                $bad++;$parts[]='EXTERNAL FAIL: '.$u.' — '.$x->get_error_message();
+                $bad++;$parts[]=$label.' FAIL: '.$u.' — '.$x->get_error_message();
             }else{
                 $status=strtoupper((string)($x['status']??'unknown'));
                 $code=absint($x['code']??0);
                 $state=(string)($x['status']??'');
                 if(in_array($state,array('ok','restricted'),true)){$ok++;}else{$bad++;}
-                $parts[]='EXTERNAL '.$status.': '.$u.($code?' — HTTP '.$code:'').' — '.sanitize_text_field($x['message']??'');
+                $parts[]=$label.' '.$status.': '.$u.($code?' — HTTP '.$code:'').' — '.sanitize_text_field($x['message']??'');
             }
         }
-        if(!$parts)$parts[]='No RSS, Source URLs or Trusted External Links are saved for this category.';
+        if(!$parts)$parts[]='No RSS, Source URLs or external links are saved for this category.';
         $name=get_cat_name($cat)?:('Category '.$cat);
         wp_send_json_success(array('message'=>$name.' source test: '.$ok.' working/usable, '.$bad.' failed/broken. '.implode(' | ',$parts),'ok'=>$ok,'failed'=>$bad,'details'=>$parts));
     }

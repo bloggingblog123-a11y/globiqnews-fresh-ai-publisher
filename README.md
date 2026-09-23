@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.2
+# GlobiqNews Fresh AI Publisher — 6.0.3
+
+6.0.3 fixes overlapping settings saves and adds saved Manual External Links to the category source-test button. If another save is active, wait for its response and retry the same Save button. See [validation and limitations](TEST-REPORT-6.0.3.md).
 
 6.0.2 adds independent category **Save Image Settings** and **Save External Link Settings** controls. Automatic research/source links default OFF; manual external links also default OFF and empty. General saves preserve the two independent sections. See [validation and limitations](TEST-REPORT-6.0.2.md).
 
