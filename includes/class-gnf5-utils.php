@@ -3,6 +3,7 @@ if (!defined('ABSPATH')) { exit; }
 
 class GNF5_Utils {
     private static $section_save = false;
+    private static $settings_lock = null;
     private static $lock_tokens = array();
     private static $source_lock_tokens = array();
     public static function heartbeat_worker() {
@@ -231,6 +232,7 @@ class GNF5_Utils {
     public static function section_keys($section = '') {
         $images=array('image_mode','image_featured','image_inline','image_webp');
         $links=array('manual_links_enabled','manual_links_max','manual_links');
+        if($section==='general')return array_values(array_diff(array_keys(self::category_settings(0)),array_merge($images,$links,array('external_links'))));
         return $section==='images' ? $images : ($section==='links' ? $links : array_merge($images,$links,array('external_links')));
     }
 
@@ -238,21 +240,52 @@ class GNF5_Utils {
         return hash('sha256',wp_json_encode(array_intersect_key($row,array_flip(self::section_keys($section)))));
     }
 
-    /** Merge only the permitted fields into the latest settings, never the stale page snapshot. */
-    public static function save_category_section($cat,$section,$values,$revision) {
-        $settings=self::settings();$row=self::category_settings($cat,$settings);
-        if(!hash_equals(self::section_revision($row,$section),(string)$revision))
-            return new WP_Error('stale_settings','These settings changed in another tab. Reload this page before saving.');
-        $row=array_merge($row,array_intersect_key($values,array_flip(self::section_keys($section))));
-        $settings['categories'][$cat]=self::sanitize_category_row($row);
-        $expected=self::section_revision($settings['categories'][$cat],$section);
-        $settings['categories'][$cat]['_row_complete']=1;
-        self::$section_save=true;
-        try { update_option(GNF5_OPTION,$settings,false); }
-        finally { self::$section_save=false; }
-        $saved=self::category_settings($cat);
-        if(!hash_equals($expected,self::section_revision($saved,$section)))return new WP_Error('save_failed','Settings could not be saved. Reload the page and try again.');
-        return self::section_revision($saved,$section);
+    /** One shared lock for all UI settings writers because categories share one WordPress option. */
+    public static function acquire_settings_lock() {
+        global $wpdb;
+        if(self::$settings_lock!==null)return false;
+        $key='gnf5_settings_write_lock';$old=get_option($key,false);
+        if(is_array($old) && (int)($old['time']??0)<time()-120)self::delete_lock_value($key,$old);
+        $value=array('token'=>wp_generate_uuid4(),'time'=>time());
+        // add_option uses an upsert after a cached existence check. INSERT IGNORE
+        // makes ownership atomic even when two workers both observed no lock.
+        if(1!==(int)$wpdb->query($wpdb->prepare("INSERT IGNORE INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'no')",$key,maybe_serialize($value))))return false;
+        wp_cache_delete($key,'options');wp_cache_delete('notoptions','options');
+        self::$settings_lock=$value;
+        // A waiting request may already have loaded the old option into its local/object cache.
+        wp_cache_delete(GNF5_OPTION,'options');wp_cache_delete('alloptions','options');
+        register_shutdown_function(array(__CLASS__,'release_settings_lock'));
+        return true;
+    }
+
+    public static function release_settings_lock() {
+        if(self::$settings_lock===null)return;
+        self::delete_lock_value('gnf5_settings_write_lock',self::$settings_lock);
+        self::$settings_lock=null;
+    }
+
+    /** Read, merge, validate and commit while holding the shared settings lock. */
+    public static function save_category_section($cat,$section,$values,$revision='') {
+        if(!in_array($section,array('images','links','general'),true) || !self::category_valid($cat))return new WP_Error('invalid_settings','Invalid settings section or category.');
+        if(!self::acquire_settings_lock())return new WP_Error('settings_busy','Another settings save is in progress. Your changes were not saved. Wait for it to finish, then click Save again.');
+        $previous_scope=self::$section_save;
+        try {
+            $settings=self::settings();$row=self::category_settings($cat,$settings);
+            if($section!=='general' && !hash_equals(self::section_revision($row,$section),(string)$revision))
+                return new WP_Error('stale_settings','These settings changed in another tab. Reload this page before saving.');
+            $row=array_merge($row,array_intersect_key($values,array_flip(self::section_keys($section))));
+            $settings['categories'][$cat]=self::sanitize_category_row($row);
+            $expected=self::section_revision($settings['categories'][$cat],$section);
+            $settings['categories'][$cat]['_row_complete']=1;
+            self::$section_save=$section!=='general';
+            update_option(GNF5_OPTION,$settings,false);
+            $saved=self::category_settings($cat);
+            if(!hash_equals($expected,self::section_revision($saved,$section)))return new WP_Error('save_failed','Settings could not be saved. Reload the page and try again.');
+            return self::section_revision($saved,$section);
+        } finally {
+            self::$section_save=$previous_scope;
+            self::release_settings_lock();
+        }
     }
 
     public static function sanitize_manual_links($rows) {
