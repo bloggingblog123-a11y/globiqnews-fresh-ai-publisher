@@ -3,6 +3,7 @@
     function call(action,data){data=data||{};data.action=action;data.nonce=GNF5Data.nonce;return $.post(GNF5Data.ajaxurl,data);}
     function handle(promise,done){promise.done(function(r){if(r&&r.success){status(r.data.message||'Done.',true);if(done)done(true,r);}else{status((r&&r.data&&r.data.message)||'Operation failed.',false);if(done)done(false,r);}}).fail(function(xhr){var msg='Request failed.';if(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message)msg=xhr.responseJSON.data.message;status(msg,false);if(done)done(false,xhr);});}
     function catName(cat){return (GNF5Data.catNames||{})[cat]||('Category '+cat);}
+    function categorySaveStatus(cat,msg,ok){$('#gnf5-cat-'+cat).find('.gnf6-category-save-result').text(msg);status(msg,ok);}
 
     $(document).on('click','.gnf6-category-manual',function(){
         var button=$(this),cat=button.data('cat'),url=$('#gnf5-cat-'+cat).find('.gnf6-category-url').val();
@@ -62,6 +63,7 @@
         var get=function(suffix){return box.find('[name$="['+suffix+']"]').first();};
         return {
             cat_id:cat,
+            complete:1,revision:box.find('.gnf6-category-revision').val()||'',
             enabled:box.find('input[type="checkbox"][name$="[enabled]"]').first().is(':checked')?1:0,
             post_limit:get('post_limit').val()||1,
             interval:get('interval').val()||'hourly',
@@ -78,6 +80,7 @@
 
     function rememberSavedCategory(cat,r){
         if(!r||!r.data||!r.data.category)return;
+        if(r.data.revision)$('#gnf5-cat-'+cat).find('.gnf6-category-revision').val(r.data.revision);
         GNF5Data.catLimits[cat]=parseInt(r.data.category.post_limit||1,10);
         var idx=(GNF5Data.enabledCats||[]).map(String).indexOf(String(cat));
         if(parseInt(r.data.category.enabled||0,10)===1&&idx<0)GNF5Data.enabledCats.push(cat);
@@ -87,19 +90,20 @@
     function saveCategoryBeforeAction(cat,callback){
         var data=categoryFormData(cat);
         if(!data){status('Category panel not found.',false);callback(false);return;}
-        status(catName(cat)+': saving current RSS/Source settings first…');
+        categorySaveStatus(cat,catName(cat)+': saving current category settings…');
         call('gnf5_save_category',data).done(function(r){
             if(r&&r.success){
                 rememberSavedCategory(cat,r);
+                categorySaveStatus(cat,r.data.message,true);
                 callback(true,r);
             }else{
-                status((r&&r.data&&r.data.message)||'Could not save category settings.',false);
+                categorySaveStatus(cat,(r&&r.data&&r.data.message)||'Could not save category settings.',false);
                 callback(false,r);
             }
         }).fail(function(xhr){
             var msg='Could not save category settings.';
             if(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message)msg=xhr.responseJSON.data.message;
-            status(msg,false);callback(false,xhr);
+            categorySaveStatus(cat,msg,false);callback(false,xhr);
         });
     }
 
@@ -117,9 +121,11 @@
         var b=$(this),cat=parseInt(b.data('cat'),10),orig=b.text(),data=categoryFormData(cat);
         if(!data){status('Category panel not found.',false);return;}
         b.prop('disabled',true).text('Saving…');
+        categorySaveStatus(cat,catName(cat)+': saving category settings…');
         handle(call('gnf5_save_category',data),function(ok,r){
             b.prop('disabled',false).text(orig);
             if(ok)rememberSavedCategory(cat,r);
+            categorySaveStatus(cat,(r&&r.data&&r.data.message)||(r&&r.responseJSON&&r.responseJSON.data&&r.responseJSON.data.message)||'Save failed. Your changes are still unsaved.',ok);
         });
     });
 
