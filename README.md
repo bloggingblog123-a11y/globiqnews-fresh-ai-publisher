@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.3
+# GlobiqNews Fresh AI Publisher — 6.0.4
+
+6.0.4 adds a persistent background category queue with immediate worker handoff and configurable concurrency (1–2). Run Selected/Run All save category fields before queueing. Empty RSS stays empty; HTML Source URLs no longer silently import advertised RSS. All articles remain Draft. See [root causes, all 14 findings and validation](TEST-REPORT-6.0.4.md).
 
 6.0.3 fixes overlapping settings saves and adds saved Manual External Links to the category source-test button. If another save is active, wait for its response and retry the same Save button. See [validation and limitations](TEST-REPORT-6.0.3.md).
 

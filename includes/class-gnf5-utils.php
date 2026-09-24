@@ -50,6 +50,7 @@ class GNF5_Utils {
             'originality_retries' => 2,
             'history_days' => 90,
             'debug_enabled' => 0,
+            'max_concurrent_categories' => 1,
             'categories' => array(),
         );
     }
@@ -155,6 +156,7 @@ class GNF5_Utils {
         $out['builtin_fallback'] = empty($input['builtin_fallback']) ? 0 : 1;
         $out['webp_quality'] = min(90, max(50, absint($input['webp_quality'] ?? 72)));
         $out['blocked_retry_hours'] = 6;
+        $out['max_concurrent_categories'] = min(2,max(1,absint($input['max_concurrent_categories'] ?? $previous['max_concurrent_categories'])));
         $out['added_value_target'] = min(100, max(0, absint($input['added_value_target'] ?? $previous['added_value_target'])));
         $out['originality_retries'] = min(2, absint($input['originality_retries'] ?? $previous['originality_retries']));
         $out['history_days'] = min(365, max(7, absint($input['history_days'] ?? $previous['history_days'])));
@@ -451,15 +453,12 @@ class GNF5_Utils {
 
     public static function log($message, $type = 'info', $cat_id = 0) {
         if($type==='debug' && empty(self::settings()['debug_enabled']))return;
-        $log = get_option(GNF5_LOG_OPTION, array());
-        if (!is_array($log)) { $log = array(); }
-        array_unshift($log, array(
-            'time' => current_time('mysql'),
-            'type' => sanitize_key($type),
-            'cat' => absint($cat_id),
-            'message' => self::redact($message),
-        ));
-        update_option(GNF5_LOG_OPTION, array_slice($log, 0, 250), false);
+        $entry=array('time'=>current_time('mysql'),'type'=>sanitize_key($type),'cat'=>absint($cat_id),'message'=>self::redact($message));
+        for($attempt=0;$attempt<20;$attempt++){
+            $old=self::fresh_option(GNF5_LOG_OPTION,false);$log=is_array($old)?$old:array();array_unshift($log,$entry);$log=array_slice($log,0,250);
+            if($old===false?self::atomic_add(GNF5_LOG_OPTION,$log):self::compare_option(GNF5_LOG_OPTION,$old,$log))return;
+        }
+        error_log('GlobiqNews log contention: '.$entry['message']);
     }
 
     public static function desired_success_status($is_recovery = false) { return 'draft'; }
@@ -470,6 +469,7 @@ class GNF5_Utils {
     }
 
     public static function cron_schedules($schedules) {
+        $schedules['gnf6_minute'] = array('interval'=>60,'display'=>'Every minute (category queue recovery)');
         $schedules['gnf5_15m'] = array('interval' => 900, 'display' => 'Every 15 minutes');
         $schedules['gnf5_30m'] = array('interval' => 1800, 'display' => 'Every 30 minutes');
         $schedules['gnf5_2h'] = array('interval' => 7200, 'display' => 'Every 2 hours');
@@ -489,6 +489,7 @@ class GNF5_Utils {
     }
 
     public static function deactivate() {
+        if(class_exists('GNF6_Queue'))GNF6_Queue::deactivate();
         if(class_exists('GNF5_RankMath'))wp_unschedule_hook(GNF5_RankMath::HOOK);
         wp_unschedule_hook(GNF5_CRON_HOOK);
         if (defined('GNF5_RECOVERY_CRON_HOOK')) { wp_clear_scheduled_hook(GNF5_RECOVERY_CRON_HOOK); }
@@ -631,113 +632,110 @@ class GNF5_Utils {
         return is_array($state) && !empty($state['time']) && (time()-absint($state['time'])) < max(60,absint($ttl));
     }
 
-    public static function acquire_lock($cat_id) {
-        $cat_id=absint($cat_id);
-        $key=self::lock_key($cat_id);
-
-        // Honor an active transient lock left by an older V5 build during an in-place upgrade.
-        $legacy=get_transient($key);
-        if(self::lock_fresh($legacy,900))return false;
-        if($legacy)delete_transient($key);
-
-        $token=wp_generate_uuid4();
-        $state=array('time'=>time(),'token'=>$token,'category'=>$cat_id);
-        // One worker across categories, manual imports, recovery and SEO retries.
-        $global='gnf5_article_worker';
-        if(!add_option($global,$state,'','no')){
-            $old=get_option($global,array());
-            if(self::lock_fresh($old,1800))return false;
-            self::delete_lock_value($global,$old);
-            if(!add_option($global,$state,'','no'))return false;
-        }
-        if(!add_option($key,$state,'','no')){
-            $existing=get_option($key,array());
-            if(self::lock_fresh($existing,900)){self::delete_lock_value($global,$state);return false;}
-            self::delete_lock_value($key,$existing);
-            if(!add_option($key,$state,'','no')){self::delete_lock_value($global,$state);return false;}
-        }
-        self::$lock_tokens[$cat_id]=$token;
-        return true;
+    // Read ownership directly from the database, avoiding stale per-request option caches.
+    public static function fresh_option($key,$default=false) {
+        global $wpdb;
+        $raw=$wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s",$key));
+        return $raw===null?$default:maybe_unserialize($raw);
     }
-
+    public static function option_cache_clear($key) {
+        wp_cache_delete($key,'options');wp_cache_delete('notoptions','options');wp_cache_delete('alloptions','options');
+    }
+    public static function atomic_add($key,$value) {
+        global $wpdb;
+        $ok=1===(int)$wpdb->query($wpdb->prepare("INSERT IGNORE INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'no')",$key,maybe_serialize($value)));
+        if($ok)self::option_cache_clear($key);return $ok;
+    }
+    public static function compare_option($key,$old,$new) {
+        global $wpdb;
+        $ok=1===(int)$wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND option_value=%s",maybe_serialize($new),$key,maybe_serialize($old)));
+        if($ok)self::option_cache_clear($key);return $ok;
+    }
     public static function delete_lock_value($key,$value) {
         global $wpdb;
         $deleted=$wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name=%s AND option_value=%s",$key,maybe_serialize($value)));
-        if($deleted){wp_cache_delete($key,'options');wp_cache_delete('alloptions','options');}
-        return (bool)$deleted;
+        if($deleted)self::option_cache_clear($key);return (bool)$deleted;
     }
-
-    public static function owns_lock($cat_id) {
-        $token=self::$lock_tokens[absint($cat_id)]??'';
-        $global=get_option('gnf5_article_worker',array());
-        return $token!=='' && is_array($global) && hash_equals((string)($global['token']??''),$token);
-    }
-
-    public static function touch_lock($cat_id) {
-        $cat_id=absint($cat_id);
-        $key=self::lock_key($cat_id);
-        $token=self::$lock_tokens[$cat_id]??'';
-        if($token==='')return false;
-        $existing=get_option($key,array());
-        if(!is_array($existing) || !hash_equals((string)($existing['token']??''),(string)$token))return false;
-        $existing['time']=time();
-        update_option($key,$existing,false);
-        $global=get_option('gnf5_article_worker',array());
-        if(is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){
-            $global['time']=time();update_option('gnf5_article_worker',$global,false);
+    public static function worker_key($slot) { return $slot===0?'gnf5_article_worker':'gnf6_article_worker_1'; }
+    public static function worker_limit() { return min(2,max(1,(int)self::settings()['max_concurrent_categories'])); }
+    public static function worker_states() {
+        $active=array();
+        for($i=0;$i<2;$i++){
+            $key=self::worker_key($i);$state=self::fresh_option($key,array());
+            if(!$state)continue;
+            $cat=self::fresh_option(self::lock_key($state['category']??0),array());
+            // New reservations can briefly precede the matching category slot assignment.
+            $valid_job=true;
+            if(!empty($state['job_id'])){
+                $job=self::fresh_option('gnf6_category_job_'.absint($state['category']),array());
+                $valid_job=($job['id']??'')===$state['job_id'] && (
+                    (($job['state']??'')==='claiming' && ($job['updated']??0)>=time()-120) ||
+                    (in_array($job['state']??'',array('dispatched','processing'),true) && ($job['token']??'')===($state['token']??'')));
+            }
+            if($valid_job && self::lock_fresh($state,1800) && is_array($cat) && ($cat['token']??'')===($state['token']??''))$active[$i]=$state;
+            else {self::release_token($state['category']??0,$state['token']??'');}
         }
-        return true;
+        return $active;
     }
-
-    public static function release_lock($cat_id) {
-        $cat_id=absint($cat_id);
-        $key=self::lock_key($cat_id);
-        $token=self::$lock_tokens[$cat_id]??'';
-        $existing=get_option($key,array());
-        // Never delete a lock acquired later by another request after this request became stale.
-        if($token!=='' && is_array($existing) && hash_equals((string)($existing['token']??''),(string)$token)){
-            self::delete_lock_value($key,$existing);
-        }
-        $global=get_option('gnf5_article_worker',array());
-        if($token!==''&&is_array($global)&&hash_equals((string)($global['token']??''),(string)$token)){self::delete_lock_value('gnf5_article_worker',$global);}
-        unset(self::$lock_tokens[$cat_id]);
-        delete_transient($key); // legacy cleanup only
-    }
-
-    public static function force_clear_lock($cat_id) {
-        $cat_id = absint($cat_id);
-        $keys = array(self::lock_key($cat_id), 'gnf5_article_worker');
-        foreach ($keys as $key) {
-            $state = get_option($key, array());
-            if (!$state || (int)($state['category'] ?? $cat_id) !== $cat_id) continue;
-            if (self::lock_fresh($state, 1800)) return false;
-        }
-        foreach ($keys as $key) {
-            $state = get_option($key, array());
-            if ($state && (int)($state['category'] ?? $cat_id) === $cat_id) self::delete_lock_value($key, $state);
-        }
-        $legacy = get_transient(self::lock_key($cat_id));
-        if (self::lock_fresh($legacy, 1800)) return false;
-        delete_transient(self::lock_key($cat_id));
-        unset(self::$lock_tokens[$cat_id]);
-        return true;
-    }
-
-    public static function stale_lock($cat_id) {
-        $state = get_option(self::lock_key($cat_id), array());
-        return $state && !self::lock_fresh($state, 1800);
-    }
-
-    public static function is_locked($cat_id) {
-        $cat_id=absint($cat_id);
-        $key=self::lock_key($cat_id);
-        $state=get_option($key,array());
-        if(self::lock_fresh($state,900))return true;
-        if($state)self::delete_lock_value($key,$state);
-        $legacy=get_transient($key);
-        if(self::lock_fresh($legacy,900))return true;
+    public static function acquire_lock($cat_id,$job_id='') {
+        $cat_id=absint($cat_id);$key=self::lock_key($cat_id);
+        $legacy=get_transient($key);if(self::lock_fresh($legacy,1800))return false;
         if($legacy)delete_transient($key);
+        $old=self::fresh_option($key,array());
+        if($old && self::lock_fresh($old,1800))return false;
+        if($old)self::delete_lock_value($key,$old);
+        $token=wp_generate_uuid4();$state=array('time'=>time(),'token'=>$token,'category'=>$cat_id);
+        if($job_id)$state['job_id']=$job_id;
+        if(!self::atomic_add($key,$state))return false;
+        $limit=self::worker_limit();$active=self::worker_states();
+        if(count($active)<$limit)for($slot=0;$slot<$limit;$slot++){
+            if(!self::atomic_add(self::worker_key($slot),$state))continue;
+            self::$lock_tokens[$cat_id]=$token;return true;
+        }
+        self::delete_lock_value($key,$state);return false;
+    }
+    public static function lock_token($cat_id) { return self::$lock_tokens[absint($cat_id)]??''; }
+    public static function detach_lock($cat_id) { unset(self::$lock_tokens[absint($cat_id)]); }
+    public static function token_owns_lock($cat_id,$token) {
+        if(!$token)return false;$cat=self::fresh_option(self::lock_key($cat_id),array());
+        if(!self::lock_fresh($cat,1800) || !hash_equals((string)($cat['token']??''),(string)$token))return false;
+        foreach(self::worker_states() as $state)if(hash_equals((string)$state['token'],(string)$token))return true;
         return false;
+    }
+    public static function adopt_lock($cat_id,$token) {
+        if(!self::token_owns_lock($cat_id,$token))return false;
+        self::$lock_tokens[absint($cat_id)]=$token;return true;
+    }
+    public static function owns_lock($cat_id) { return self::token_owns_lock($cat_id,self::lock_token($cat_id)); }
+    public static function touch_lock($cat_id) {
+        $token=self::lock_token($cat_id);if(!$token)return false;
+        $keys=array(self::lock_key($cat_id),self::worker_key(0),self::worker_key(1));$touched=false;
+        foreach($keys as $key){$old=self::fresh_option($key,array());if(($old['token']??'')!==$token)continue;$new=$old;$new['time']=time();if($new!==$old)self::compare_option($key,$old,$new);$touched=true;}
+        return $touched;
+    }
+    public static function release_token($cat_id,$token) {
+        if(!$token)return;
+        foreach(array(self::lock_key($cat_id),self::worker_key(0),self::worker_key(1)) as $key){$state=self::fresh_option($key,array());if(($state['token']??'')===$token)self::delete_lock_value($key,$state);}
+    }
+    public static function release_lock($cat_id) {
+        $token=self::lock_token($cat_id);self::release_token($cat_id,$token);self::detach_lock($cat_id);
+        if($token){GNF5_Utils::log('Worker slot released.','debug',$cat_id);do_action('gnf6_worker_released',$cat_id);}
+    }
+    public static function force_clear_lock($cat_id) {
+        $state=self::fresh_option(self::lock_key($cat_id),array());
+        if(self::lock_fresh($state,1800) || self::lock_fresh(get_transient(self::lock_key($cat_id)),1800))return false;
+        if($state)self::release_token($cat_id,$state['token']??'');
+        delete_transient(self::lock_key($cat_id));self::worker_states();
+        do_action('gnf6_worker_released',$cat_id);return true;
+    }
+    public static function stale_lock($cat_id) {
+        $state=self::fresh_option(self::lock_key($cat_id),array());return $state && !self::lock_fresh($state,1800);
+    }
+    public static function is_locked($cat_id) {
+        $key=self::lock_key($cat_id);$state=self::fresh_option($key,array());
+        if(self::lock_fresh($state,1800))return true;
+        if($state)self::release_token($cat_id,$state['token']??'');
+        return self::lock_fresh(get_transient($key),1800);
     }
 
     public static function source_lock_key($url) {
@@ -751,11 +749,11 @@ class GNF5_Utils {
         $key=self::source_lock_key($identity);
         $token=wp_generate_uuid4();
         $state=array('time'=>time(),'token'=>$token);
-        if(!add_option($key,$state,'','no')){
+        if(!self::atomic_add($key,$state)){
             $existing=get_option($key,array());
             if(self::lock_fresh($existing,2700))return false;
             self::delete_lock_value($key,$existing);
-            if(!add_option($key,$state,'','no'))return false;
+            if(!self::atomic_add($key,$state))return false;
         }
         self::$source_lock_tokens[$key]=$token;
         return true;
@@ -774,10 +772,10 @@ class GNF5_Utils {
     public static function blocked_key($url) { $id=self::normalize_url($url); return 'gnf5_block_' . md5($id?:trim((string)$url)); }
     public static function is_blocked_cached($url) { return (bool)get_transient(self::blocked_key($url)); }
 
-    public static function mark_blocked($url, $reason = 'blocked') {
+    public static function mark_blocked($url, $reason = 'blocked',$http=null,$content_type='') {
         $key = self::blocked_key($url);
         $old = get_transient($key);
-        $row = array('url'=>self::redact($url), 'reason'=>self::redact($reason), 'time'=>time(),
+        $row = array('url'=>self::redact($url), 'reason'=>self::redact($reason), 'time'=>time(),'http'=>$http,'content_type'=>$content_type,
             'next_retry'=>time()+6*HOUR_IN_SECONDS, 'attempts'=>is_array($old) ? (int)($old['attempts'] ?? 0)+1 : 1);
         set_transient($key, $row, 6*HOUR_IN_SECONDS);
         return $row;

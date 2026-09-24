@@ -3,7 +3,9 @@ if (!defined('ABSPATH')) { exit; }
 
 class GNF5_Sources {
     private static $requests = 0;
-    public static function reset_budget() { self::$requests = 0; }
+    private static $trace = array();
+    private static $gdelt_url = "";
+    public static function reset_budget() { self::$requests = 0; self::$trace=array(); self::$gdelt_url=""; }
     public static function request_count() { return self::$requests; }
     public static function access_error($error) {
         return is_wp_error($error) && in_array($error->get_error_code(), array('blocked','blocked_cached','challenge','paywall','login','http_request_failed','request_budget'), true);
@@ -17,6 +19,7 @@ class GNF5_Sources {
         }
         if (++self::$requests > 40) return new WP_Error('request_budget', 'Source request budget reached; retry later.');
         GNF5_Utils::log('Fetch '.$purpose.' request '.self::$requests.': '.$url,'debug');
+        self::$trace[$url]=array('requested'=>true,'http'=>null,'content_type'=>'');
         $response = wp_safe_remote_get($url, array(
             'timeout' => 15, 'limit_response_size' => 1024*1024,
             'redirection' => 3,
@@ -33,8 +36,9 @@ class GNF5_Sources {
         $body = (string)wp_remote_retrieve_body($response);
         if (strlen($body) >= 1024*1024) return new WP_Error('source_size','Source exceeds the 1 MB response limit.');
         $content_type = strtolower((string)wp_remote_retrieve_header($response, 'content-type'));
+        self::$trace[$url]=array('requested'=>true,'http'=>$code,'content_type'=>$content_type);
         if (in_array($code, array(401,403,429), true)) {
-            GNF5_Utils::mark_blocked($url, 'HTTP '.$code);
+            GNF5_Utils::mark_blocked($url, 'HTTP '.$code,$code,$content_type);
             return new WP_Error('blocked', 'HTTP '.$code.' — source blocked/rate-limited; skipped without bypass.');
         }
         if ($code < 200 || $code >= 400) {
@@ -96,6 +100,21 @@ class GNF5_Sources {
         );
     }
 
+    public static function gdelt_url() { return self::$gdelt_url; }
+    public static function diagnostic($type,$url,$result) {
+        $url=GNF5_Utils::normalize_url($url);$trace=self::$trace[$url]??array();$block=get_transient(GNF5_Utils::blocked_key($url));
+        $error=is_wp_error($result)?$result->get_error_message():'';
+        return array('type'=>$type,'url'=>GNF5_Utils::redact($url),'http'=>$trace['http']??($block['http']??null),
+            'content_type'=>$trace['content_type']??($block['content_type']??''),'requested'=>!empty($trace['requested']),
+            'parser'=>$block?'BLOCKED':(is_wp_error($result)?'FAIL':'PASS'),'candidate_count'=>is_array($result)?count($result):0,
+            'blocked'=>(bool)$block,'block_reason'=>$block['reason']??'','next_retry'=>$block['next_retry']??null,'error'=>GNF5_Utils::redact($error));
+    }
+    public static function diagnostic_text($d) {
+        return strtoupper($d['type']).': '.$d['url'].' | HTTP: '.($d['http']??'not requested/unavailable').' | Content-Type: '.($d['content_type']?:'unknown').
+            ' | Parse: '.$d['parser'].' | Candidates: '.$d['candidate_count'].' | Blocked: '.($d['blocked']?'YES':'NO').
+            ($d['block_reason']?' | Reason: '.$d['block_reason']:'').($d['next_retry']?' | Next retry: '.gmdate('c',$d['next_retry']):'').($d['error']?' | '.$d['error']:'');
+    }
+
     /** Robust RSS/Atom loader. WordPress SimplePie is first choice; raw XML is a fallback. */
     public static function rss_items($feed_url, $limit = 15, $depth = 0) {
         $depth=max(0,absint($depth));
@@ -149,13 +168,7 @@ class GNF5_Sources {
             if (!is_wp_error($out) && $out) { return $out; }
         }
 
-        // If an HTML page was accidentally entered in the RSS box, use its declared RSS/Atom feed.
-        $linked = self::linked_feed_urls($f['body'], $f['url']);
-        foreach (array_slice($linked, 0, 3) as $linked_feed) {
-            if ($linked_feed === $feed_url) { continue; }
-            $r = self::rss_items($linked_feed, $limit, $depth + 1);
-            if (!is_wp_error($r) && $r) { return $r; }
-        }
+        // RSS uses explicitly configured feed URLs only; never discover another feed from HTML.
         return new WP_Error('rss_empty', 'No usable RSS/Atom items were found at '.$feed_url.($simplepie_error ? ' WordPress feed error: '.$simplepie_error : ''));
     }
 
@@ -254,20 +267,7 @@ class GNF5_Sources {
         $f = self::fetch($url, 'page');
         if (is_wp_error($f)) return $f;
 
-        // A feed pasted into Source URLs still works.
-        // First use the already-fetched XML, then fall back to the full RSS engine
-        // (WordPress SimplePie + raw XML + declared-feed handling). Never scan XML as HTML.
-        if (self::looks_like_feed($f['body'], $f['content_type'])) {
-            $raw_items = self::parse_raw_feed($f['body'], $f['url'], $limit);
-            if (!is_wp_error($raw_items) && $raw_items) { return $raw_items; }
-
-            $feed_items = self::rss_items($f['url'], $limit);
-            if (!is_wp_error($feed_items) && $feed_items) { return $feed_items; }
-
-            $raw_error = is_wp_error($raw_items) ? $raw_items->get_error_message() : 'No usable raw-feed items.';
-            $feed_error = is_wp_error($feed_items) ? $feed_items->get_error_message() : 'No usable feed items.';
-            return new WP_Error('source_feed', 'The Source URL is a feed, but it could not be parsed. '.$raw_error.' | '.$feed_error);
-        }
+        if(self::looks_like_feed($f['body'],$f['content_type']))return new WP_Error('source_is_feed','This Source URL returns RSS/Atom. Add it explicitly to the RSS/Atom field instead.');
 
         $html = $f['body'];
         $base = $f['url'];
@@ -364,23 +364,8 @@ class GNF5_Sources {
             $items[] = array('url'=>$u,'title'=>sanitize_text_field($titles[$u] ?? ''),'fallback_text'=>'','method'=>'Source/Category URL');
         }
 
-        // Publisher-declared feeds are a safe fallback for category pages.
-        // Some publishers expose category feeds with ID/generic URLs; in that case the
-        // <link rel="alternate" title="..."> label is also used to verify category scope.
-        if (count($items) < min(5, $limit)) {
-            foreach (self::linked_feed_candidates($html, $base) as $feed_candidate) {
-                $feed_url=(string)($feed_candidate['url']??'');
-                if(!$feed_url)continue;
-                $feed_items = self::rss_items($feed_url, $limit);
-                if (!is_wp_error($feed_items)) {
-                    if(!self::feed_candidate_is_category_scoped($feed_candidate,$base)){
-                        $feed_items = self::filter_items_to_source_scope($feed_items, $base);
-                    }
-                    $items = array_merge($items, $feed_items);
-                }
-                if (count(self::unique_items($items)) >= $limit) { break; }
-            }
-        }
+        // Source URL discovery never follows advertised RSS/Atom feeds.
+        // Only the saved RSS field can authorize RSS discovery.
 
         // Public sitemap fallback. Supports sitemap indexes recursively.
         if (count(self::unique_items($items)) < min(5, $limit)) {
@@ -767,6 +752,7 @@ class GNF5_Sources {
         );
 
         if (++self::$requests > 40) return new WP_Error('request_budget','Source request budget reached.');
+        self::$trace[$url]=array('requested'=>true,'http'=>null,'content_type'=>'');
         $response = wp_safe_remote_head($url, $args);
         $code = is_wp_error($response) ? 0 : absint(wp_remote_retrieve_response_code($response));
 
@@ -777,6 +763,7 @@ class GNF5_Sources {
             $code = is_wp_error($response) ? 0 : absint(wp_remote_retrieve_response_code($response));
         }
 
+        if(!is_wp_error($response))self::$trace[$url]=array('requested'=>true,'http'=>$code,'content_type'=>(string)wp_remote_retrieve_header($response,'content-type'));
         if (is_wp_error($response)) {
             GNF5_Utils::mark_blocked($url,$response->get_error_message());
             $result = array('url'=>$url,'status'=>'unavailable','code'=>0,'message'=>$response->get_error_message());
@@ -978,6 +965,7 @@ class GNF5_Sources {
         if($cs['gdelt_country'] && $cs['gdelt_country']!=='all')$query.=' sourcecountry:'.$cs['gdelt_country'];
         $params=array('query'=>$query,'mode'=>'ArtList','format'=>'json','sort'=>'DateDesc','maxrecords'=>$cs['gdelt_results'],'timespan'=>$cs['gdelt_window']);
         $key='gnf5_gdelt_'.md5($cat_id.'|'.wp_json_encode($params));
+        self::$gdelt_url='https://api.gdeltproject.org/api/v2/doc/doc?'.http_build_query($params,'','&',PHP_QUERY_RFC3986);
         $cached=get_transient($key);
         if(!$force && is_array($cached))return isset($cached['error'])?new WP_Error('gdelt_unavailable',$cached['error']):$cached['items'];
         $url='https://api.gdeltproject.org/api/v2/doc/doc?'.http_build_query($params,'','&',PHP_QUERY_RFC3986);
