@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.4
+# GlobiqNews Fresh AI Publisher — 6.0.5
+
+6.0.5 protects saved settings from older category/full-page forms, verifies committed category values, rejects incomplete saves and shows category-local feedback. Reload the settings page after updating. See [persistence findings and tests](TEST-REPORT-6.0.5.md).
 
 6.0.4 adds a persistent background category queue with immediate worker handoff and configurable concurrency (1–2). Run Selected/Run All save category fields before queueing. Empty RSS stays empty; HTML Source URLs no longer silently import advertised RSS. All articles remain Draft. See [root causes, all 14 findings and validation](TEST-REPORT-6.0.4.md).
 

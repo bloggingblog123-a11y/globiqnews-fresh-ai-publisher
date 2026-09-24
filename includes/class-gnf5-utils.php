@@ -242,6 +242,22 @@ class GNF5_Utils {
         return hash('sha256',wp_json_encode(array_intersect_key($row,array_flip(self::section_keys($section)))));
     }
 
+    /** Validate a complete browser form against the values it originally displayed. */
+    public static function validate_settings_form($input) {
+        if(!is_array($input) || empty($input['_form_complete']))return new WP_Error('incomplete_settings','The settings form was incomplete. Nothing was saved. Reload and use the individual category Save buttons, or ask your host to increase max_input_vars.');
+        $settings=self::settings();
+        if(!isset($input['_global_revision']) || !is_string($input['_global_revision']) || !hash_equals(self::global_revision($settings),$input['_global_revision']))return new WP_Error('stale_settings','Global settings changed after this page was opened. Nothing from this form was saved. Copy your unsaved edits, reload the page, and apply them again.');
+        foreach((array)($input['categories']??array()) as $cat=>$row){
+            if(!is_array($row) || empty($row['_row_complete']) || !isset($row['_revision']) || !is_string($row['_revision']))return new WP_Error('incomplete_settings','A category form was incomplete. Nothing was saved. Reload and try its category Save button.');
+            if(!hash_equals(self::section_revision(self::category_settings($cat,$settings),'general'),$row['_revision']))return new WP_Error('stale_settings',get_cat_name($cat).' settings changed after this page was opened. Nothing from this form was saved. Copy your unsaved edits, reload the page, and apply them again.');
+        }
+        return true;
+    }
+
+    public static function global_revision($settings) {
+        unset($settings['categories']);return wp_hash(wp_json_encode($settings));
+    }
+
     /** One shared lock for all UI settings writers because categories share one WordPress option. */
     public static function acquire_settings_lock() {
         global $wpdb;
@@ -273,7 +289,7 @@ class GNF5_Utils {
         $previous_scope=self::$section_save;
         try {
             $settings=self::settings();$row=self::category_settings($cat,$settings);
-            if($section!=='general' && !hash_equals(self::section_revision($row,$section),(string)$revision))
+            if(($section!=='general' || $revision!=='') && !hash_equals(self::section_revision($row,$section),(string)$revision))
                 return new WP_Error('stale_settings','These settings changed in another tab. Reload this page before saving.');
             $row=array_merge($row,array_intersect_key($values,array_flip(self::section_keys($section))));
             $settings['categories'][$cat]=self::sanitize_category_row($row);
@@ -281,7 +297,9 @@ class GNF5_Utils {
             $settings['categories'][$cat]['_row_complete']=1;
             self::$section_save=$section!=='general';
             update_option(GNF5_OPTION,$settings,false);
-            $saved=self::category_settings($cat);
+            // Verify the committed database row, not a possibly stale object-cache value.
+            self::option_cache_clear(GNF5_OPTION);
+            $saved=self::category_settings($cat,self::fresh_option(GNF5_OPTION,array()));
             if(!hash_equals($expected,self::section_revision($saved,$section)))return new WP_Error('save_failed','Settings could not be saved. Reload the page and try again.');
             return self::section_revision($saved,$section);
         } finally {

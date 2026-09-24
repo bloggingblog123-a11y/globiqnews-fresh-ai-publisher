@@ -1,13 +1,11 @@
-# GlobiqNews Fresh AI Publisher 6.0.4
+# GlobiqNews Fresh AI Publisher 6.0.5
 
-Queued categories now continue in the background as soon as a worker slot is free. Run Selected Categories and Run All save the selected categories first, persist the entire queue, and start available workers. Run Category Now joins the same queue. Maximum Concurrent Categories supports 1 or 2 and is in section 6, Advanced source safety & recovery. The queue display refreshes automatically.
+Fixes an older settings tab silently overwriting newer category settings after a successful save. Category Save and the full-page Save now check the revision originally displayed. Conflicting forms report that nothing was saved instead of replacing newer values. A successful category save updates the page revision so subsequent category or global saves work without reloading.
 
-Completed, exhausted, failed, blocked and cancelled workers finalize counters and logs, release their category lock and slot, then dispatch the next eligible job. Empty or blocked sources cannot occupy a worker for six hours. Source retries have independent events. Atomic claims and token ownership prevent duplicate workers and cross-request lock release. Cron is a watchdog/fallback; normal completion sends an immediate background request to the next worker.
+Category saves verify the committed database row. Empty/truncated category requests cannot report success, and incomplete full-page forms are rejected before writing. Save feedback appears beside the category as well as at the top of the page. Images and Manual External Links retain their separate Save buttons and are preserved by general/global saves.
 
-Saved RSS settings are authoritative. An empty RSS field means zero RSS feeds, including Run All. Source URLs no longer silently import feeds advertised in HTML. To use an RSS/Atom URL, put it explicitly in RSS Feeds. Removing a configured source cancels its pending retry. Source tests show configured/tested counts, HTTP status, content type, parse result, candidates, blocked reason and retry time.
+Checked general category fields, RSS/Source clearing, GDELT, author, timing, post limits, instructions, image controls, manual links, global controls, blank-key retention, stale tabs and queue regressions. All articles remain Draft. Existing settings and GitHub updates are retained.
 
-All generated articles remain Draft. Existing settings, authors, post limits, images, link controls, Rank Math, recovery and GitHub updates are retained.
+After updating to 6.0.5, reload the plugin settings page once. If a conflict is reported, copy your unsaved edits, reload and apply them again. Update through WordPress → Plugins → Check for updates → Update now; do not delete the plugin.
 
-Update through WordPress → Plugins → Check for updates → Update now. Do not delete the installed plugin. The normal background queue requires WordPress to accept its own admin-ajax.php loopback requests. If hosting blocks these, the debug log reports it and cron recovery remains available.
-
-Validation: 345 distinct isolated WordPress assertions, eight JavaScript checks, six scoring-service checks, PHP/JavaScript syntax and ZIP integrity. An actual local HTTP queue drained three categories with WP-Cron disabled. See TEST-REPORT-6.0.4.md for all 14 requested findings and test limits. Production hosting was not tested.
+Validation: 326 isolated WordPress checks and eight JavaScript checks passed. Real local browser saves, refresh persistence, stale-tab rejection and a current full-page save were verified. Production hosting was not tested; the reproduced overwrite path is confirmed, but it is not proof of the exact cause on your live site. See TEST-REPORT-6.0.5.md.

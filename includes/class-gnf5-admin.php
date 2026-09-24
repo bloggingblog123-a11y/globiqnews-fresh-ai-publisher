@@ -14,6 +14,10 @@ class GNF5_Admin {
             if(!current_user_can('manage_options'))wp_die('Permission denied.','Permission denied',array('response'=>403));
             check_admin_referer('gnf5_group-options');
             if(!GNF5_Utils::acquire_settings_lock())wp_die('Another settings save is in progress. Nothing from this form was saved. Go back and retry after the other save finishes.','Settings busy',array('response'=>409,'back_link'=>true));
+            if(isset($_POST['gnf6_settings_form'])){
+                $valid=GNF5_Utils::validate_settings_form(wp_unslash($_POST[GNF5_OPTION]??array()));
+                if(is_wp_error($valid)){GNF5_Utils::release_settings_lock();wp_die(esc_html($valid->get_error_message()),'Settings not saved',array('response'=>409,'back_link'=>true));}
+            }
         }
     }
 
@@ -81,6 +85,8 @@ class GNF5_Admin {
 
             <form method="post" action="options.php">
                 <?php settings_fields('gnf5_group'); ?>
+                <input type="hidden" name="gnf6_settings_form" value="1">
+                <input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[_global_revision]" value="<?php echo esc_attr(GNF5_Utils::global_revision($s)); ?>">
 
                 <section class="gnf5-card">
                     <h2>1. Gemini Article Writer</h2>
@@ -178,6 +184,7 @@ class GNF5_Admin {
                         <div class="gnf5-category" id="gnf5-cat-<?php echo absint($cat->term_id); ?>">
                             <label><input type="checkbox" class="gnf6-select-category" value="<?php echo absint($cat->term_id); ?>"> Select <?php echo esc_html($cat->name); ?> for queue</label>
                             <p class="gnf6-category-queue-state" aria-live="polite"></p>
+                            <p class="gnf6-category-save-result" aria-live="polite"></p>
                             <div class="gnf5-category-head">
                                 <h3><?php echo esc_html($cat->name); ?> <small>Category ID <?php echo absint($cat->term_id); ?></small></h3>
                                 <div class="gnf5-cat-actions"><button type="button" class="button gnf5-save-cat" data-cat="<?php echo absint($cat->term_id); ?>">Save <?php echo esc_html($cat->name); ?> Settings</button><button type="button" class="button gnf5-test-cat-sources" data-cat="<?php echo absint($cat->term_id); ?>">Test RSS + Sources + External Links</button><button type="button" class="button button-primary gnf5-run-cat" data-cat="<?php echo absint($cat->term_id); ?>">Run <?php echo esc_html($cat->name); ?> Now</button></div>
@@ -196,6 +203,7 @@ class GNF5_Admin {
                             </div>
                             <label><?php echo esc_html($cat->name); ?> — Category Custom Instructions<small>Combined with Global Instructions only for this category.</small><textarea rows="5" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][instructions]" placeholder="Example: Use a match-report style for Sports, but keep all locked factual and SEO rules."><?php echo esc_textarea($cs['instructions']); ?></textarea></label>
                             <input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][_row_complete]" value="1">
+                            <input type="hidden" class="gnf6-category-revision" name="<?php echo esc_attr(GNF5_OPTION); ?>[categories][<?php echo absint($cat->term_id); ?>][_revision]" value="<?php echo esc_attr(GNF5_Utils::section_revision($cs,'general')); ?>">
                             <div class="gnf5-grid2"><label>Manual article for <?php echo esc_html($cat->name); ?><input type="url" class="gnf6-category-url" placeholder="https://example.com/article"></label><div class="gnf5-button-cell"><button type="button" class="button gnf6-category-manual" data-cat="<?php echo absint($cat->term_id); ?>">Research &amp; Create Draft</button></div></div>
                             <?php if(GNF5_Utils::stale_lock($cat->term_id)): ?><p class="gnf5-lock">This category has a stale import lock. <button type="button" class="button-link gnf5-clear-lock" data-cat="<?php echo absint($cat->term_id); ?>">Clear only if genuinely stuck</button></p><?php endif; ?>
                         </div>
@@ -205,6 +213,7 @@ class GNF5_Admin {
 
                 <details class="gnf5-card"><summary>Protected writing instruction</summary><p><?php echo esc_html(GNF5_Writer::protected_instruction()); ?></p></details>
                 <?php submit_button('Save Global & General Category Settings'); ?>
+                <input type="hidden" name="<?php echo esc_attr(GNF5_OPTION); ?>[_form_complete]" value="1">
             </form>
 
             <section class="gnf5-card">
@@ -314,6 +323,7 @@ class GNF5_Admin {
         self::guard();
         $cat=absint($_POST['cat_id']??0);
         if(!GNF5_Utils::category_valid($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
+        if(!empty($_POST['complete']) && (empty($_POST['revision']) || array_diff(GNF5_Utils::section_keys('general'),array_keys($_POST))))wp_send_json_error(array('message'=>'Incomplete category settings. Nothing was saved. Reload the page and try again.'),400);
         $row=array(
             'enabled'=>empty($_POST['enabled'])?0:1,'post_limit'=>absint($_POST['post_limit']??1),
             'interval'=>sanitize_key($_POST['interval']??'hourly'),'author_id'=>absint($_POST['author_id']??0),
@@ -322,11 +332,12 @@ class GNF5_Admin {
         );
         foreach(array('gdelt_enabled','gdelt_keywords','gdelt_language','gdelt_country','gdelt_window','gdelt_results','gdelt_interval','min_sources','max_candidates','opportunity_threshold') as $key) { if(isset($_POST[$key]) && is_scalar($_POST[$key]))$row[$key]=wp_unslash($_POST[$key]); }
         $row=array_intersect_key($row,$_POST);
-        $result=GNF5_Utils::save_category_section($cat,'general',$row);
+        if(!$row)wp_send_json_error(array('message'=>'No category settings were received. Nothing was saved.'),400);
+        $result=GNF5_Utils::save_category_section($cat,'general',$row,wp_unslash($_POST['revision']??''));
         if(is_wp_error($result))wp_send_json_error(array('message'=>$result->get_error_message()),409);
         $name=get_cat_name($cat)?:('Category '.$cat);
         GNF5_Utils::log($name.' settings saved separately.','success',$cat);
-        wp_send_json_success(array('message'=>$name.' settings saved.','category'=>GNF5_Utils::category_settings($cat)));
+        wp_send_json_success(array('message'=>$name.' general settings saved and verified. Use the separate Save buttons for Images and External Links.','category'=>GNF5_Utils::category_settings($cat),'revision'=>$result));
     }
 
     public static function ajax_save_section() {
