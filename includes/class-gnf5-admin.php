@@ -166,8 +166,9 @@ class GNF5_Admin {
 
                 <section class="gnf5-card">
                     <h2>6. Category-wise Sources, Author, Post Limits, Timing & Instructions</h2>
-                    <p>Every category remains isolated. GDELT, RSS and Source URLs are independently optional. Manual URLs work without automatic sources. <strong>Source URLs auto-detect category pages, direct article URLs, and feed URLs.</strong> Category-page discovery ignores navigation/sidebar links and strongly prefers article URLs that match that category path.</p>
+                    <p>Every category remains isolated. GDELT, RSS and Source URLs are independently optional. Manual URLs work without automatic sources. <strong>Source URLs discover category pages and direct article URLs. Add RSS/Atom feeds only in the RSS field; empty RSS means no RSS discovery.</strong> Category-page discovery ignores navigation/sidebar links and strongly prefers article URLs that match that category path.</p>
                     <details><summary>Advanced source safety & recovery</summary><div class="gnf5-grid2 gnf5-details">
+<label>Maximum Concurrent Categories<select name="<?php echo esc_attr(GNF5_OPTION); ?>[max_concurrent_categories]"><option value="1" <?php selected($s['max_concurrent_categories'],1); ?>>1</option><option value="2" <?php selected($s['max_concurrent_categories'],2); ?>>2</option></select></label>
 <label>Blocked Source Retry Delay (hours)<input type="number" value="6" readonly></label>
 <div class="gnf5-rule">Fixed 6 hours. Blocked, login, paywall and connection-failure sources are skipped and retried later; the plugin does not bypass anti-bot systems.</div>
 </div></details>
@@ -175,6 +176,8 @@ class GNF5_Admin {
                     <div class="gnf5-category-list">
                     <?php foreach($cats as $cat): $cs=GNF5_Utils::category_settings($cat->term_id,$s); ?>
                         <div class="gnf5-category" id="gnf5-cat-<?php echo absint($cat->term_id); ?>">
+                            <label><input type="checkbox" class="gnf6-select-category" value="<?php echo absint($cat->term_id); ?>"> Select <?php echo esc_html($cat->name); ?> for queue</label>
+                            <p class="gnf6-category-queue-state" aria-live="polite"></p>
                             <div class="gnf5-category-head">
                                 <h3><?php echo esc_html($cat->name); ?> <small>Category ID <?php echo absint($cat->term_id); ?></small></h3>
                                 <div class="gnf5-cat-actions"><button type="button" class="button gnf5-save-cat" data-cat="<?php echo absint($cat->term_id); ?>">Save <?php echo esc_html($cat->name); ?> Settings</button><button type="button" class="button gnf5-test-cat-sources" data-cat="<?php echo absint($cat->term_id); ?>">Test RSS + Sources + External Links</button><button type="button" class="button button-primary gnf5-run-cat" data-cat="<?php echo absint($cat->term_id); ?>">Run <?php echo esc_html($cat->name); ?> Now</button></div>
@@ -205,8 +208,11 @@ class GNF5_Admin {
             </form>
 
             <section class="gnf5-card">
-                <h2>7. Immediate Manual Runs — No WP-Cron</h2>
+                <h2>7. Background Category Queue</h2>
+                <p>Categories start as worker slots become available, even after this page closes. Status refreshes automatically. Cron provides recovery if a background request is interrupted.</p>
                 <button type="button" class="button button-primary gnf5-run-all">Run All Enabled Categories Now</button>
+                <button type="button" class="button gnf6-run-selected">Run Selected Categories</button>
+                <div id="gnf6-queue-status" aria-live="polite"></div>
                 <hr>
                 <div class="gnf5-grid3">
                     <label>Manual Article URL<input type="url" id="gnf5-manual-url" placeholder="https://example.com/article"></label>
@@ -282,7 +288,10 @@ class GNF5_Admin {
     private static function guard(){
         if(!current_user_can('manage_options'))wp_send_json_error(array('message'=>'Permission denied.'),403);
         foreach($_POST as $key=>$value){
-            if($key==='post_ids' && is_array($value)){
+            if($key==='cat_ids' && is_array($value)){
+                if(count($value)>100)wp_send_json_error(array('message'=>'Select no more than 100 categories.'),400);
+                foreach($value as $id)if(!is_scalar($id))wp_send_json_error(array('message'=>'Invalid category selection.'),400);
+            }elseif($key==='post_ids' && is_array($value)){
                 if(count($value)>200)wp_send_json_error(array('message'=>'Select no more than 200 Drafts.'),400);
                 foreach($value as $id)if(!is_scalar($id))wp_send_json_error(array('message'=>'Invalid Draft selection.'),400);
             }elseif(!is_scalar($value))wp_send_json_error(array('message'=>'Invalid request field: '.sanitize_key($key)),400);
@@ -369,23 +378,20 @@ class GNF5_Admin {
         $cat=absint($_POST['cat_id']??0);
         if(!GNF5_Utils::category_valid($cat))wp_send_json_error(array('message'=>'Invalid WordPress category.'));
         $cs=GNF5_Utils::category_settings($cat);
-        $parts=array();$ok=0;$bad=0;
-        if (!empty($cs['gdelt_enabled'])) { $g=GNF5_Sources::gdelt_items($cat); if(is_wp_error($g)){$bad++;$parts[]='GDELT: '.$g->get_error_message();}else{$ok++;$parts[]='GDELT: '.count($g).' candidate(s).';} }
-        $rss_urls=GNF5_Utils::urls_from_lines($cs['rss']);
-        foreach($rss_urls as $u){
-            $x=GNF5_Sources::rss_items($u,5);
-            if(is_wp_error($x)){$bad++;$parts[]='RSS FAIL: '.$u.' — '.$x->get_error_message();}
-            elseif(!$x){$bad++;$parts[]='RSS FAIL: '.$u.' — feed returned zero usable article items.';}
-            else{$ok++;$parts[]='RSS OK: '.$u.' — '.count($x).' item(s) found via '.sanitize_text_field($x[0]['method']??'RSS').'.';}
+        GNF5_Sources::reset_budget();$parts=array();$ok=0;$bad=0;$reports=array();
+        $rss_urls=GNF5_Utils::urls_from_lines($cs['rss']);$source_urls=GNF5_Utils::urls_from_lines($cs['urls']);
+        $counts=array('rss_configured'=>count($rss_urls),'rss_tested'=>0,'sources_configured'=>count($source_urls),'sources_tested'=>0,'gdelt_enabled'=>!empty($cs['gdelt_enabled']));
+        $parts[]='RSS configured: '.count($rss_urls).(!$rss_urls?' — SKIPPED':'');
+        $parts[]='Source URLs configured: '.count($source_urls);$parts[]='GDELT: '.($counts['gdelt_enabled']?'ENABLED':'DISABLED');
+        foreach(array('rss'=>$rss_urls,'urls'=>$source_urls) as $type=>$urls)foreach($urls as $u){
+            if(!GNF6_Queue::configured($cat,$type,$u))continue;
+            $x=$type==='rss'?GNF5_Sources::rss_items($u,25):GNF5_Sources::discover_source($u,25);
+            $counts[$type==='rss'?'rss_tested':'sources_tested']++;
+            if(is_wp_error($x) || !$x){$bad++;GNF6_Queue::schedule_source_retry($cat,$type,$u);}else $ok++;
+            $d=GNF5_Sources::diagnostic($type==='rss'?'RSS':'SOURCE',$u,$x);$reports[]=$d;$parts[]=GNF5_Sources::diagnostic_text($d);
         }
-        foreach(GNF5_Utils::urls_from_lines($cs['urls']) as $u){
-            $x=GNF5_Sources::discover_source($u,8);
-            if(is_wp_error($x)){$bad++;$parts[]='SOURCE FAIL: '.$u.' — '.$x->get_error_message();}
-            else{
-                $ok++;$methods=array();foreach($x as $i){if(!empty($i['method']))$methods[$i['method']]=true;}
-                $parts[]='SOURCE OK: '.$u.' — '.count($x).' candidate(s) via '.implode(', ',array_keys($methods)).'.';
-            }
-        }
+        $parts[]='RSS tested: '.$counts['rss_tested'].' | RSS status: '.(!$rss_urls?'SKIPPED':'TESTED');$parts[]='Source URLs tested: '.$counts['sources_tested'];
+        if($counts['gdelt_enabled']){$g=GNF5_Sources::gdelt_items($cat);if(GNF5_Sources::gdelt_url()){$d=GNF5_Sources::diagnostic('GDELT',GNF5_Sources::gdelt_url(),$g);$reports[]=$d;$parts[]=GNF5_Sources::diagnostic_text($d);}if(is_wp_error($g)){$bad++;$parts[]='GDELT: '.$g->get_error_message();}else{$ok++;$parts[]='GDELT: '.count($g).' candidate(s).';}}
         $external=array();
         foreach(GNF5_Utils::urls_from_lines($cs['external_links']) as $u)$external[$u]='LEGACY RESEARCH LINK';
         if(empty($cs['manual_links_enabled']))$parts[]='MANUAL EXTERNAL LINKS OFF — configured entries were not requested.';
@@ -397,6 +403,7 @@ class GNF5_Admin {
         if(!empty($cs['manual_links_enabled']) && !array_filter((array)$cs['manual_links'],function($entry){return !empty($entry['enabled']);}))$parts[]='No enabled manual external links are saved for this category.';
         foreach($external as $u=>$label){
             $x=GNF5_Sources::test_external_link($u,true);
+            $d=GNF5_Sources::diagnostic($label,$u,$x);$d['candidate_count']=0;$d['parser']='NOT APPLICABLE (link reachability)';$reports[]=$d;$parts[]=GNF5_Sources::diagnostic_text($d);
             if(is_wp_error($x)){
                 $bad++;$parts[]=$label.' FAIL: '.$u.' — '.$x->get_error_message();
             }else{
@@ -409,14 +416,23 @@ class GNF5_Admin {
         }
         if(!$parts)$parts[]='No RSS, Source URLs or external links are saved for this category.';
         $name=get_cat_name($cat)?:('Category '.$cat);
-        wp_send_json_success(array('message'=>$name.' source test: '.$ok.' working/usable, '.$bad.' failed/broken. '.implode(' | ',$parts),'ok'=>$ok,'failed'=>$bad,'details'=>$parts));
+        wp_send_json_success(array('message'=>$name.' source test: '.$ok.' working/usable, '.$bad.' failed/broken. '.implode(' | ',$parts),'ok'=>$ok,'failed'=>$bad,'details'=>$parts,'configuration'=>$counts,'sources'=>$reports));
     }
 
     public static function ajax_run_category(){
-        self::guard();$cat=absint($_POST['cat_id']??0);$pass=max(1,absint($_POST['pass']??1));
-        $r=GNF5_Runner::run_category($cat,'immediate',1,$pass,sanitize_text_field(wp_unslash($_POST['run_id']??'')));
-        if(is_wp_error($r))wp_send_json_error(array('message'=>$r->get_error_message()));
-        wp_send_json_success(array('message'=>$r['message']??'Category run finished.','result'=>$r));
+        self::guard();$cat=absint($_POST['cat_id']??0);
+        if(!GNF5_Utils::category_valid($cat))wp_send_json_error(array('message'=>'Invalid category.'),400);
+        $r=GNF6_Queue::enqueue(array($cat));
+        wp_send_json_success(array('message'=>$r['added']?'Category queued; available workers dispatched.':get_cat_name($cat).' is already running or waiting.','queue'=>$r));
+    }
+    public static function ajax_enqueue_categories(){
+        self::guard();$ids=array_slice(array_filter(array_map('absint',(array)($_POST['cat_ids']??array()))),0,100);
+        if(!$ids)wp_send_json_error(array('message'=>'Select at least one category.'),400);
+        $r=GNF6_Queue::enqueue($ids);
+        wp_send_json_success(array('message'=>$r['added'].' categories queued.'.($r['already']?' Already running/waiting: '.implode(', ',$r['already']).'.':''),'queue'=>$r));
+    }
+    public static function ajax_category_queue_status(){
+        self::guard();wp_send_json_success(array('jobs'=>GNF6_Queue::status(),'active'=>count(GNF5_Utils::worker_states()),'limit'=>GNF5_Utils::worker_limit()));
     }
 
     public static function ajax_run_manual(){
@@ -506,7 +522,7 @@ class GNF5_Admin {
         echo '</select></label></div>';
         $run=get_option('gnf5_run_cat_'.$cat->term_id,array());$next=wp_next_scheduled(GNF5_CRON_HOOK,array((int)$cat->term_id));
         $state=$run['status']??'idle';if($state==='running' && ($run['updated']??0)<time()-1800)$state='interrupted — ready for retry';
-        echo '<p><strong>'.esc_html($cat->name).' status:</strong> '.esc_html($state).' · Last run: '.esc_html(!empty($run['updated'])?wp_date('Y-m-d H:i',$run['updated']):'not run').' · Drafts: '.absint($run['created']??0).' · Next: '.esc_html($next?wp_date('Y-m-d H:i',$next):'not scheduled').'</p>';
+        echo '<p><strong>'.esc_html($cat->name).' last recorded batch:</strong> '.esc_html($state).' · Recorded: '.esc_html(!empty($run['updated'])?wp_date('Y-m-d H:i',$run['updated']):'not run').' · Drafts: '.absint($run['created']??0).' · Next scheduled run: '.esc_html($next?wp_date('Y-m-d H:i',$next):'not scheduled').'</p>';
         echo '<p class="description">At least one automatic discovery method and an author are required for scheduled runs. Opportunity scores are internal heuristics, not traffic predictions. Failed sources do not disable the other methods.</p>';
     }
 

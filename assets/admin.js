@@ -103,52 +103,6 @@
         });
     }
 
-    function runCategoryBatch(cat,limit,onDone){
-        var made=0,requests=0,zeroStreak=0,runId='ui-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-        var summary={published:0,drafts:0,duplicates:0,failed:0,rssFailures:0,sourceFailures:0,rssCandidates:0,sourceCandidates:0,checkedSources:false,interrupted:false,diagnostics:[]};
-        limit=Math.max(1,parseInt(limit||1,10));var maxRequests=(limit*4)+4;
-
-        function addDiagnostics(list){
-            (list||[]).forEach(function(x){if(x&&summary.diagnostics.indexOf(x)<0)summary.diagnostics.push(x);});
-        }
-        function step(){
-            if(made>=limit||requests>=maxRequests||zeroStreak>=5){onDone(made,summary);return;}
-            requests++;status(catName(cat)+': created '+made+' of '+limit+'. Reading GDELT/RSS/Source candidates…');
-            call('gnf5_run_category',{cat_id:cat,pass:Math.min(4,requests),run_id:runId}).done(function(r){
-                if(r&&r.success&&r.data.result){
-                    summary.checkedSources=true;
-                    var d=r.data.result,c=parseInt(d.created||0,10);made+=c;
-                    if(d.done){onDone(made,summary);return;}
-                    summary.published+=parseInt(d.published||0,10);
-                    summary.drafts+=parseInt(d.drafts||0,10);
-                    summary.duplicates+=parseInt(d.duplicates||0,10);
-                    summary.failed+=parseInt(d.failed_before_create||0,10);
-                    summary.rssFailures=Math.max(summary.rssFailures,parseInt(d.rss_failures||0,10));
-                    summary.sourceFailures=Math.max(summary.sourceFailures,parseInt(d.source_failures||0,10));
-                    summary.rssCandidates=Math.max(summary.rssCandidates,parseInt(d.rss_candidates||0,10));
-                    summary.sourceCandidates=Math.max(summary.sourceCandidates,parseInt(d.source_candidates||0,10));
-                    addDiagnostics(d.diagnostics);
-
-                    // If nothing reached article processing and the source itself failed,
-                    // do not repeat the exact same broken feed five times.
-                    if(c===0 && parseInt(d.attempted||0,10)===0 && (summary.rssFailures>0||summary.sourceFailures>0)){
-                        onDone(made,summary);return;
-                    }
-                    if(c===0)zeroStreak++;else zeroStreak=0;step();
-                }else{
-                    summary.interrupted=true;
-                    var msg=(r&&r.data&&r.data.message)||'Category run failed.';
-                    addDiagnostics([msg]);onDone(made,summary);
-                }
-            }).fail(function(xhr){
-                summary.interrupted=true;
-                var msg='Category request failed.';
-                if(xhr.responseJSON&&xhr.responseJSON.data&&xhr.responseJSON.data.message)msg=xhr.responseJSON.data.message;
-                addDiagnostics([msg]);onDone(made,summary);
-            });
-        }step();
-    }
-
     $(document).on('click','.gnf5-test-cat-sources',function(){
         var b=$(this),cat=parseInt(b.data('cat'),10),orig=b.text();
         b.prop('disabled',true).text('Saving + Testing…');
@@ -169,38 +123,39 @@
         });
     });
 
-    $(document).on('click','.gnf5-run-cat',function(){
-        var b=$(this),cat=parseInt(b.data('cat'),10),orig=b.text();
-        b.prop('disabled',true).text('Saving + Running…');
-        saveCategoryBeforeAction(cat,function(saved){
-            if(!saved){b.prop('disabled',false).text(orig);return;}
-            var limit=(GNF5Data.catLimits||{})[cat]||1;
-            b.text('Running…');
-            runCategoryBatch(cat,limit,function(made,summary){
-                var msg=catName(cat)+(summary.interrupted?' run stopped. Target ':' run finished. Target ')+limit+'; created '+made+
-                    ' | Drafts '+summary.drafts+
-                    ' | duplicates '+summary.duplicates+' | failed before create '+summary.failed+'.';
-                if(made===0){
-                    if(summary.rssFailures>0)msg+=' RSS feed error detected.';
-                    else if(summary.checkedSources&&!summary.interrupted&&summary.rssCandidates===0&&summary.sourceCandidates===0)msg+=' No usable new article candidates reached processing.';
-                    if(summary.diagnostics.length)msg+=' '+summary.diagnostics[0];
-                }
-                status(msg,made>0);
-                b.prop('disabled',false).text(orig);
-            });
+    function displayCategoryQueue(data){
+        var jobs=data.jobs||[], lines=[];
+        jobs.forEach(function(job){
+            var labels={waiting:'Waiting',claiming:'Starting',dispatched:'Starting',processing:'Processing',completed:'Completed',exhausted:'Exhausted',failed:'Failed',blocked:'Blocked',skipped:'Skipped',cancelled:'Cancelled'};
+            var line=catName(job.category)+' — '+(labels[job.state]||job.state)+' · Drafts: '+job.created+(job.target?' / '+job.target:'');
+            $('#gnf5-cat-'+job.category).find('.gnf6-category-queue-state').text(line+(job.message?' — '+job.message:''));lines.push(line);
         });
-    });
-
+        $('#gnf6-queue-status').text(lines.length?lines.join(' | '):'Queue empty.');
+    }
+    function pollCategoryQueue(){
+        if(!$('#gnf6-queue-status').length)return;
+        call('gnf6_category_queue_status',{}).done(function(r){if(r&&r.success)displayCategoryQueue(r.data);})
+            .always(function(){setTimeout(pollCategoryQueue,3000);});
+    }
+    function enqueueCategories(cats,button){
+        if(!cats.length){status('Select or enable at least one category.',false);return;}
+        button.prop('disabled',true);var i=0;
+        // Save all current general fields first, including explicitly empty RSS.
+        // Only after every save succeeds is the complete group enqueued.
+        function saveNext(){
+            if(i<cats.length){saveCategoryBeforeAction(cats[i++],function(ok){if(ok)saveNext();else button.prop('disabled',false);});return;}
+            var request=call('gnf6_enqueue_categories',{cat_ids:cats});
+            handle(request,function(ok,r){if(ok&&r.data.queue)displayCategoryQueue({jobs:r.data.queue.jobs});});
+            request.always(function(){button.prop('disabled',false);});
+        }
+        saveNext();
+    }
+    $(document).on('click','.gnf5-run-cat',function(){var b=$(this);enqueueCategories([parseInt(b.data('cat'),10)],b);});
     $(document).on('click','.gnf5-run-all',function(){
-        var b=$(this),cats=(GNF5Data.enabledCats||[]).slice(),i=0,total=0;
-        if(!cats.length){status('No categories are enabled. Save settings first.',false);return;}
-        b.prop('disabled',true);
-        function next(){
-            if(i>=cats.length){status('Run All finished. Created '+total+' post(s) across '+cats.length+' enabled categories.',total>0);b.prop('disabled',false);return;}
-            var cat=cats[i++],limit=(GNF5Data.catLimits||{})[cat]||1;
-            runCategoryBatch(cat,limit,function(made){total+=made;next();});
-        }next();
+        var cats=[];$('.gnf5-category').each(function(){var box=$(this);if(box.find('input[type="checkbox"][name$="[enabled]"]').first().is(':checked'))cats.push(parseInt(box.find('.gnf5-run-cat').data('cat'),10));});enqueueCategories(cats,$(this));
     });
+    $(document).on('click','.gnf6-run-selected',function(){var cats=[];$('.gnf6-select-category:checked').each(function(){cats.push(parseInt($(this).val(),10));});enqueueCategories(cats,$(this));});
+    $(pollCategoryQueue);
 
     $(document).on('click','.gnf5-run-manual',function(){var url=$('#gnf5-manual-url').val(),cat=$('#gnf5-manual-cat').val();if(!url){status('Enter an article URL.',false);return;}status('Processing manual article now…');handle(call('gnf5_run_manual',{url:url,cat_id:cat}),function(){setTimeout(function(){location.reload();},800);});});
     $(document).on('click','.gnf5-test-source',function(){var url=$('#gnf5-manual-url').val();if(!url){status('Enter an article URL to test.',false);return;}status('Testing public source extraction…');handle(call('gnf5_test_source',{url:url}));});

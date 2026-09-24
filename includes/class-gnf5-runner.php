@@ -12,72 +12,12 @@ class GNF5_Runner {
     }
 
     public static function cron_run_category($cat_id) {
-        $cat_id=absint($cat_id);
-        $s=GNF5_Utils::settings();
-        $cs=GNF5_Utils::category_settings($cat_id,$s);
-        if(empty($cs['enabled']))return;
-
-        // Only one automatic target chain may exist for a category at a time.
-        // This prevents the recurring schedule from starting a second chain while
-        // continuation events from the previous target are still working.
-        $target=max(1,absint($cs['post_limit']));
-        if(!GNF5_Utils::start_cron_chain($cat_id,$target)){
-            GNF5_Utils::log('CRON START SKIPPED — previous automatic target chain is still active for this category.','info',$cat_id);
-            return;
-        }
-        self::cron_continue_category($cat_id,$target,1,0);
+        $cs=GNF5_Utils::category_settings($cat_id);
+        if(!empty($cs['enabled']))GNF6_Queue::enqueue(array($cat_id),'cron');
     }
-
     public static function cron_continue_category($cat_id,$remaining=1,$pass=1,$zero_streak=0) {
-        $cat_id=absint($cat_id);
-        $remaining=max(1,absint($remaining));
-        $pass=min(4,max(1,absint($pass)));
-        $zero_streak=max(0,absint($zero_streak));
-
-        $s=GNF5_Utils::settings();
-        $cs=GNF5_Utils::category_settings($cat_id,$s);
-        if(empty($cs['enabled'])){GNF5_Utils::end_cron_chain($cat_id);return;}
-        if(!GNF5_Utils::cron_chain_active($cat_id)){GNF5_Utils::start_cron_chain($cat_id,$remaining);}
-        GNF5_Utils::touch_cron_chain($cat_id,$remaining);
-
-        $result=self::run_category($cat_id,'cron-chunk',1,$pass);
-        if(is_wp_error($result)){
-            if($result->get_error_code()==='locked' && defined('GNF5_CRON_CONTINUE_HOOK')){
-                GNF5_Utils::touch_cron_chain($cat_id,$remaining);
-                $ok=wp_schedule_single_event(time()+90,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$pass,$zero_streak));
-                if($ok){
-                    GNF5_Utils::log('CRON CHUNK DEFERRED — category lock busy; retrying in about 90 seconds.','warning',$cat_id);
-                }else{
-                    GNF5_Utils::end_cron_chain($cat_id);
-                    GNF5_Utils::log('CRON CHUNK STOPPED — could not schedule deferred continuation.','error',$cat_id);
-                }
-            }else{
-                GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON CHUNK FAILED — '.$result->get_error_message(),'warning',$cat_id);
-            }
-            return;
-        }
-
-        $made=absint($result['created']??0);
-        if($made>0){$remaining=max(0,$remaining-$made);$zero_streak=0;}else{$zero_streak++;}
-
-        if($remaining>0 && $zero_streak<5 && defined('GNF5_CRON_CONTINUE_HOOK')){
-            $next_pass=min(4,$pass+1);
-            GNF5_Utils::touch_cron_chain($cat_id,$remaining);
-            $ok=wp_schedule_single_event(time()+75,GNF5_CRON_CONTINUE_HOOK,array($cat_id,$remaining,$next_pass,$zero_streak));
-            if($ok){
-                GNF5_Utils::log('CRON CHUNK CONTINUE — '.$remaining.' target post(s) still remaining; next chunk scheduled.','info',$cat_id);
-            }else{
-                GNF5_Utils::end_cron_chain($cat_id);
-                GNF5_Utils::log('CRON TARGET STOPPED — continuation event could not be scheduled.','error',$cat_id);
-            }
-        }elseif($remaining>0){
-            GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET STOPPED — no usable new candidate found after repeated chunk attempts; '.$remaining.' target post(s) remain unfilled.','warning',$cat_id);
-        }else{
-            GNF5_Utils::end_cron_chain($cat_id);
-            GNF5_Utils::log('CRON TARGET COMPLETE — automatic category target reached.','success',$cat_id);
-        }
+        // Compatibility for continuation events left by earlier releases.
+        self::cron_run_category($cat_id);
     }
 
     public static function auto_recovery_cron() {
@@ -132,17 +72,20 @@ class GNF5_Runner {
     }
 
 
-    public static function run_category($cat_id,$trigger='manual',$override_limit=null,$scan_multiplier=1,$run_id='') {
+    public static function run_category($cat_id,$trigger='manual',$override_limit=null,$scan_multiplier=1,$run_id='',$worker_token='') {
         $cat_id=absint($cat_id);
         $cat=get_category($cat_id);
         if(!$cat || is_wp_error($cat))return new WP_Error('category','WordPress category not found.');
+        GNF5_Utils::option_cache_clear(GNF5_OPTION);
         $settings=GNF5_Utils::settings();
         $cs=GNF5_Utils::category_settings($cat_id,$settings);
 
         if (!GNF5_Utils::valid_author_id($cs['author_id'])) return new WP_Error('author', $cat->name.': select an author before running this category.');
-        if(!GNF5_Utils::acquire_lock($cat_id)){
-            return new WP_Error('locked','Another article is processing. Categories and SEO analysis run one at a time; retry shortly.');
+        if($worker_token ? !GNF5_Utils::adopt_lock($cat_id,$worker_token) : !GNF5_Utils::acquire_lock($cat_id)){
+            return new WP_Error('locked','This category is already running or all worker slots are occupied.');
         }
+        $created=0;$attempted=0;
+        try {
         GNF5_Sources::reset_budget();
         if(function_exists('set_time_limit'))@set_time_limit(300);
 
@@ -156,11 +99,11 @@ class GNF5_Runner {
         $rss_urls=GNF5_Utils::urls_from_lines($cs['rss']);
         $source_urls=GNF5_Utils::urls_from_lines($cs['urls']);
         $seen_candidates=array();
+        GNF5_Utils::log('RSS configured: '.count($rss_urls).(!$rss_urls?' — SKIPPED':''),'debug',$cat_id);
 
         if(!$rss_urls && !$source_urls && empty($cs['gdelt_enabled'])){
             $message=$cat->name.': no automatic discovery method (GDELT, RSS or Source URL) is configured. Save this category first, then run it.';
             GNF5_Utils::log('CATEGORY STOP — '.$message,'warning',$cat_id);
-            GNF5_Utils::release_lock($cat_id);
             return array(
                 'created'=>0,'published'=>0,'drafts'=>0,'validation_drafts'=>0,'duplicates'=>0,
                 'failed_before_create'=>0,'attempted'=>0,'target'=>$run_limit,'message'=>$message,
@@ -169,7 +112,6 @@ class GNF5_Runner {
             );
         }
 
-        try {
             $batch=self::begin_run($cat_id,$run_id,$cs['post_limit']);
             if(is_wp_error($batch))return $batch;
             self::$run_id=$batch['id'];
@@ -192,9 +134,11 @@ class GNF5_Runner {
                 }
 
                 foreach($rss_urls as $feed_url){
+                    if(!GNF6_Queue::configured($cat_id,'rss',$feed_url))continue;
                     GNF5_Utils::touch_lock($cat_id);
                     $rr=GNF5_Sources::rss_items($feed_url,$scan);
                     if(is_wp_error($rr)){
+                        GNF6_Queue::schedule_source_retry($cat_id,'rss',$feed_url);
                         $rss_failures++;
                         $diag='RSS FAIL — '.$feed_url.' — '.$rr->get_error_message();
                         $diagnostics[$diag]=true;
@@ -208,9 +152,11 @@ class GNF5_Runner {
                 }
 
                 foreach($source_urls as $source_url){
+                    if(!GNF6_Queue::configured($cat_id,'urls',$source_url))continue;
                     GNF5_Utils::touch_lock($cat_id);
                     $sr=GNF5_Sources::discover_source($source_url,$scan);
                     if(is_wp_error($sr)){
+                        GNF6_Queue::schedule_source_retry($cat_id,'urls',$source_url);
                         $source_failures++;
                         $diag='SOURCE FAIL/BLOCKED — '.$source_url.' — '.$sr->get_error_message();
                         $diagnostics[$diag]=true;
@@ -299,7 +245,7 @@ class GNF5_Runner {
         } finally {
             self::finish_run($cat_id,self::$run_id,$created,$attempted);
             self::$run_id='';
-            GNF5_Utils::release_lock($cat_id);
+            if(!$worker_token)GNF5_Utils::release_lock($cat_id);
         }
     }
 
@@ -339,7 +285,7 @@ class GNF5_Runner {
             GNF5_Topics::remember($research,$cat_id,'failed',0,'Below GDELT source/opportunity threshold.');
             return new WP_Error('topic_low_opportunity','GDELT topic below configured source/opportunity threshold; no Draft created.');
         }
-        GNF5_Topics::remember($research,$cat_id,'processing');
+        $claim=GNF5_Topics::claim($research,$cat_id);if(is_wp_error($claim))return $claim;
         $article=GNF5_Writer::create_article($research,$cat_id);
         if(is_wp_error($article)){GNF5_Topics::remember($research,$cat_id,'failed',0,$article->get_error_message());return $article;}
         if(!GNF5_SEO::title_is_unique($article['title'],0,$article['focus_keyword'])){

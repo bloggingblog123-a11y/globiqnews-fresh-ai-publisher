@@ -41,7 +41,7 @@ class GNF5_Topics {
         sort($parts);return hash('sha256',implode('|',$parts));
     }
     public static function history() {
-        $rows=get_option('gnf5_topic_history',array());if(!is_array($rows))return array();
+        $rows=GNF5_Utils::fresh_option('gnf5_topic_history',array());if(!is_array($rows))return array();
         $since=time()-(int)GNF5_Utils::settings()['history_days']*DAY_IN_SECONDS;
         return array_slice(array_values(array_filter($rows,function($r)use($since){return is_array($r) && ($r['time']??0)>$since;})),-1000);
     }
@@ -60,12 +60,26 @@ class GNF5_Topics {
         $parts=array();foreach($research['facts'] as $f)$parts[]=$f['subject'].' '.$f['detail'].' '.$f['value'].' '.$f['date'];
         return self::keywords(implode(' ',$parts));
     }
+    public static function claim($research,$cat_id) {
+        $key='gnf6_topic_claim';$old=GNF5_Utils::fresh_option($key,array());
+        if($old && ($old['time']??0)<time()-60)GNF5_Utils::delete_lock_value($key,$old);
+        $lock=array('time'=>time(),'token'=>wp_generate_uuid4());
+        if(!GNF5_Utils::atomic_add($key,$lock))return new WP_Error('topic_busy','Another worker is checking topic identity; candidate deferred.');
+        try{
+            if(self::duplicate($research))return new WP_Error('topic_duplicate','This event is already covered by a queued or saved article.');
+            return self::remember($research,$cat_id,'processing');
+        }finally{GNF5_Utils::delete_lock_value($key,$lock);}
+    }
     public static function remember($research,$cat_id,$status,$post_id=0,$message='') {
-        $rows=self::history();$fp=self::fingerprint($research);
-        $rows=array_values(array_filter($rows,function($r)use($fp){return ($r['fingerprint']??'')!==$fp;}));
-        $rows[]=array('fingerprint'=>$fp,'tokens'=>self::fact_tokens($research),'entities'=>array_values(array_unique(array_map('strtolower',array_column($research['facts'],'subject')))),'time'=>time(),'category'=>(int)$cat_id,'status'=>$status,'post_id'=>(int)$post_id,
+        $fp=self::fingerprint($research);
+        $entry=array('fingerprint'=>$fp,'tokens'=>self::fact_tokens($research),'entities'=>array_values(array_unique(array_map('strtolower',array_column($research['facts'],'subject')))),'time'=>time(),'category'=>(int)$cat_id,'status'=>$status,'post_id'=>(int)$post_id,
             'sources'=>array_column($research['sources'],'url'),'message'=>GNF5_Utils::redact($message));
-        update_option('gnf5_topic_history',array_slice($rows,-1000),false);
+        for($attempt=0;$attempt<20;$attempt++){
+            $old=GNF5_Utils::fresh_option('gnf5_topic_history',false);$rows=is_array($old)?$old:array();$since=time()-(int)GNF5_Utils::settings()['history_days']*DAY_IN_SECONDS;
+            $rows=array_values(array_filter($rows,function($r)use($fp,$since){return ($r['fingerprint']??'')!==$fp && ($r['time']??0)>$since;}));$rows[]=$entry;$rows=array_slice($rows,-1000);
+            if($old===false?GNF5_Utils::atomic_add('gnf5_topic_history',$rows):GNF5_Utils::compare_option('gnf5_topic_history',$old,$rows))return true;
+        }
+        return new WP_Error('topic_busy','Topic history is busy; retry candidate later.');
     }
     public static function opportunity($item,$research,$cat_id) {
         $cs=GNF5_Utils::category_settings($cat_id);$dates=array();
