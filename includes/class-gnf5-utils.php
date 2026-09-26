@@ -462,7 +462,9 @@ class GNF5_Utils {
     }
 
     public static function word_count($html) {
-        $text = html_entity_decode(wp_strip_all_tags((string)$html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Block boundaries separate words even when AI HTML has no whitespace.
+        $html=preg_replace('~</?(?:p|h[1-6]|li|div|br|tr|td|th|blockquote)\b[^>]*>~iu',' ',(string)$html);
+        $text = html_entity_decode(wp_strip_all_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         if (preg_match_all('/\b[\p{L}\p{N}][\p{L}\p{N}\'’\-]*\b/u', $text, $m)) {
             return count($m[0]);
         }

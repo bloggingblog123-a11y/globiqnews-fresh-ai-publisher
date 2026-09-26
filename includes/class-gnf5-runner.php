@@ -319,7 +319,7 @@ class GNF5_Runner {
     }
 
     private static function compose_content($post_id,$article,$image_ids,$cat_id,$cs,$source_url) {
-        $html=GNF5_SEO::insert_internal_links(GNF5_SEO::public_article_html($article['content_html']),$post_id,$cat_id);
+        $html=GNF5_SEO::insert_internal_links(GNF5_SEO::public_article_html($article['content_html']),$post_id,$cat_id,$article['focus_keyword']??'',$article['title']??'',$article['original_focus_keyword']??'');
         $html=GNF5_SEO::insert_external_links($html,$post_id,$cat_id);
         $content=GNF5_SEO::build_gutenberg_content($html);
         if(GNF5_Utils::images_enabled($cat_id))$content=GNF5_Images::insert_two_blocks($content,$image_ids,$article['image_alts'],$cat_id);
@@ -391,8 +391,18 @@ class GNF5_Runner {
 
     public static function improve_seo($post_id) {
         if(!GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Human edits detected. Your text was preserved; use the SEO checklist to make changes in the editor.');
+        $token=self::edit_token($post_id);
         $article=get_post_meta($post_id,'_gnf5_article_data',true);
         if(!is_array($article) || empty($article['content_html']))return new WP_Error('article_missing','No generated article checkpoint exists.');
+        // Explicit repair may refresh expired source comparisons; a missing one-day
+        // cache must not permanently prevent an older, unchanged Draft being repaired.
+        $research=GNF5_Research::load($post_id,true);
+        if(is_wp_error($research))return $research;
+        $review=GNF5_Quality::evaluate($article,$research,true,$post_id);
+        if(!hash_equals($token,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Article changed during research review; your changes were preserved.');
+        GNF5_Research::store($post_id,$research);
+        $article['quality']=$review;update_post_meta($post_id,'_gnf5_article_data',$article);GNF5_Publish::checkpoint($post_id);GNF5_Quality::store($post_id,$review);
+        if(!GNF5_Quality::permits_seo($review))return new WP_Error('quality_review','Originality or factual evidence still needs review. '.implode(' ',GNF5_Quality::review_reasons($review)));
         $cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);$token=self::edit_token($post_id);
         $content=self::compose_content($post_id,$article,(array)get_post_meta($post_id,'_gnf5_image_ids',true),$cat_id,GNF5_Utils::category_settings($cat_id),'');
         if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during link checks. Changes were not overwritten.');
@@ -423,8 +433,8 @@ class GNF5_Runner {
         }
         // One fresh bounded budget for this repair policy, including older drafts.
         // Human-edited drafts are rejected above before any state is changed.
-        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='606'){
-            update_post_meta($post_id,'_gnf5_text_repair_policy','606');
+        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='611'){
+            update_post_meta($post_id,'_gnf5_text_repair_policy','611');
             delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
             delete_post_meta($post_id,'_gnf5_seo_repair_stopped');
         }
@@ -433,18 +443,20 @@ class GNF5_Runner {
         if(get_post_meta($post_id,'_gnf5_seo_repair_stopped',true)===$repair_key)return false;
         $token=self::edit_token($post_id);$cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
         $errors=GNF5_SEO::text_feedback($article);
+        if(!GNF5_SEO::focus_keyword_is_unique($article['focus_keyword']??'',$post_id))$errors[]='This focus keyword is already used on another post. Refine it to a meaningful unused article-specific phrase and update all placements together.';
         if(!$local)foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
             // Images, paid Content AI and link placement are not tasks for the text writer.
-            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow','titleHasSentiment','titleHasPowerWords','titleHasNumber'),true))continue;
+            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow','titleHasSentiment','titleSentiment','titleHasPowerWords'),true))continue;
             if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
         }
         if(!$errors)return false;
         $attempt=(int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)+1;update_post_meta($post_id,'_gnf5_seo_repair_attempts',$attempt);
         update_post_meta($post_id,'_gnf5_seo_repair_note','Checking non-image SEO, attempt '.$attempt.' of 3.');
-        $repaired=GNF5_Writer::repair_for_validation($article,$research,$errors,$cat_id);
+        $repaired=GNF5_Writer::repair_for_validation($article,$research,$errors,$cat_id,$post_id);
         if(is_wp_error($repaired)){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO improvement unavailable: '.GNF5_Utils::redact($repaired->get_error_message()));return false;}
+        update_post_meta($post_id,'_gnf5_seo_unresolved',$repaired['seo_unresolved']??array());
         $same=true;foreach(array('title','seo_title','focus_keyword','slug','meta_description','excerpt','content_html') as $key)if(($article[$key]??'')!==($repaired[$key]??''))$same=false;
-        if($same || !GNF5_SEO::text_repair_progress($article,$repaired)){
+        if($same || !GNF5_SEO::text_repair_progress($article,$repaired,$post_id)){
             update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
             update_post_meta($post_id,'_gnf5_seo_repair_note','No text-check progress without regressions was returned. Original text retained; review the checklist.');return false;
         }
