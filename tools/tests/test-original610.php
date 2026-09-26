@@ -73,7 +73,7 @@ try{
  $qualityMode='normal';$review=GNF5_Quality::evaluate($article,$research,true);
  v6($review['originality']['status']==='PASS' && $review['facts']['status']==='PASS','independent fixture with complete factual review passes');
  $neutral=$article;$neutral['seo_title']='Solstice laboratory: scope and context';$neutralChecks=GNF5_SEO::text_checks($neutral);
- v6(!$neutralChecks['sentiment']['repair'] && !$neutralChecks['power_word']['repair'] && !$neutralChecks['title_number']['repair'],'neutral title cosmetics do not force SEO rewrites');
+ v6(!$neutralChecks['sentiment']['repair'] && !$neutralChecks['power_word']['repair'] && $neutralChecks['title_number']['repair'],'neutral title words stay optional while factual numbers are requested');
  $badReview=$review;$badReview['originality']['status']='FAIL';v6(!GNF5_Quality::permits_seo($badReview),'failed originality blocks automatic text optimization');
  v6(count($review['added_value']['evidence'])===1,'repeating same passage in five categories does not multiply added value');
  $invented=$article;$invented['seo_title']='Solstice laboratory employs 9999 experts';

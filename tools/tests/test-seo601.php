@@ -51,7 +51,7 @@ try{
     $sample=$article;$sample['content_html']='<p>Solstice laboratory '.implode(' ',array_fill(0,433,'context')).' Solstice laboratory</p>';
     $sampleChecks=GNF5_SEO::text_checks($sample);
     v6($sampleChecks['length']['status']==='REVIEW' && $sampleChecks['density']['status']==='REVIEW','437-word/two-keyword screenshot conditions produce actionable feedback');
-    $sample['content_html']='<p>'.implode(' ',array_fill(0,7,'Solstice laboratory')).' '.implode(' ',array_fill(0,586,'context')).'</p>';$sampleChecks=GNF5_SEO::text_checks($sample);
+    $sample['content_html']='<p>'.implode(' ',array_fill(0,9,'Solstice laboratory')).' '.implode(' ',array_fill(0,582,'context')).'</p>';$sampleChecks=GNF5_SEO::text_checks($sample);
     v6($sampleChecks['length']['status']==='PASS' && $sampleChecks['density']['status']==='PASS','600-word and natural-density boundary passes local checks');
     $id=draft601($cat,$article,$research);
     $related=wp_insert_post(array('post_title'=>'Solstice laboratory research background','post_content'=>'<p>A related published discussion.</p>','post_status'=>'publish','post_category'=>array($othercat)));$created[]=$related;
@@ -85,7 +85,7 @@ try{
     v6($checksNow['internal_links']['status']==='PASS' && $checksNow['external_links']['status']==='PASS' && $checksNow['dofollow']['status']==='PASS','final checklist detects real rendered links: '.wp_json_encode(array_intersect_key($checksNow,array_flip(array('internal_links','external_links','dofollow')))));
     v6(isset($checksNow['sentiment'],$checksNow['title_number'],$checksNow['toc'],$checksNow['keyword_unique']) && !isset($checksNow['images']),'all non-image title/readability/keyword checks covered separately');
     $repairMode='keyword';$repaired=GNF5_Writer::repair_for_validation($article,$research,$before,$cat);
-    v6($repaired['focus_keyword']===$article['focus_keyword'],'AI cannot switch the focus keyword during repair');
+    v6(is_wp_error($repaired),'AI cannot switch the focus keyword to an unrelated topic during repair');
     $nochange=draft601($cat,$article,$research);$repairMode='same';$beforeCalls=$seoCalls;GNF5_Runner::optimize_text($nochange);
     v6($seoCalls===$beforeCalls+1 && get_post_meta($nochange,'_gnf5_seo_repair_attempts',true)==1,'unchanged response stops immediately instead of wasting three rewrites');
     update_post_meta($nochange,'_gnf5_seo_repair_attempts',3);$beforeCalls=$seoCalls;GNF5_Runner::optimize_text($nochange);

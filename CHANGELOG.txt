@@ -1,3 +1,6 @@
+6.1.1 — 2026-09-26
+Measured 1.5% density/length targets; partial progress without stuffing; factual title-number repair; safe refinement of reused keywords; full duplicate lookup; relevant target body-based internal links; explicit expired-comparison refresh; compact HTML counts; unresolved reasons. Images unchanged, Draft-only preserved.
+
 6.1.0 — 2026-09-26
 Independent headline engine; source/site/live-job title comparisons; bounded title regeneration; copied-sentence and meta/excerpt checks; numeric/quotation integrity guards; title-only actions; source-prose isolation; factual/originality gate before SEO repair; neutral title cosmetics optional. Image behavior and Draft-only publishing preserved. See TEST-REPORT-6.1.0.md.
 

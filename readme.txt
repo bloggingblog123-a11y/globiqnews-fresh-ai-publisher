@@ -1,7 +1,7 @@
 === GlobiqNews Fresh AI Publisher ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 6.1.0
+Stable tag: 6.1.1
 
 Topic discovery, evidence-backed research, original articles and optional images saved as Drafts for human review.
 
@@ -36,6 +36,10 @@ Enable plugin auto-updates in WordPress to receive future published code updates
 Published updates preserve saved settings and do not automatically publish articles.
 
 == Changelog ==
+= 6.1.1 =
+Measured density/length repair, factual title numbers, topic-safe reused-keyword
+refinement, broader relevant internal links and expired comparison refresh.
+
 = 6.1.0 =
 Independent headline/source/site comparisons, copied sentence and metadata checks,
 factual review gates, title-only actions. Images unchanged; Draft-only preserved.

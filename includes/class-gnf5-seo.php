@@ -88,18 +88,40 @@ class GNF5_SEO {
         if($keyword==='')return false;
         $exclude=$ignore_post_id?array(absint($ignore_post_id)):array();
 
-        // LIKE narrows candidates, then exact token comparison avoids substring false positives.
-        $q=new WP_Query(array(
-            'post_type'=>'post','post_status'=>'any','posts_per_page'=>100,'fields'=>'ids','no_found_rows'=>true,
-            'post__not_in'=>$exclude,'meta_key'=>'rank_math_focus_keyword','meta_value'=>$keyword,'meta_compare'=>'LIKE',
-        ));
-        foreach((array)$q->posts as $id){
-            $raw=(string)get_post_meta($id,'rank_math_focus_keyword',true);
-            foreach(explode(',',$raw) as $existing){
+        // Page every candidate; the old 100-result cap could miss an older exact match.
+        $page=1;
+        do{
+            $q=new WP_Query(array('post_type'=>'post','post_status'=>'any','posts_per_page'=>100,'paged'=>$page++,
+                'orderby'=>'ID','order'=>'ASC','fields'=>'ids','no_found_rows'=>true,'post__not_in'=>$exclude,
+                'meta_key'=>'rank_math_focus_keyword','meta_value'=>$keyword,'meta_compare'=>'LIKE'));
+            foreach((array)$q->posts as $id)foreach(explode(',',(string)get_post_meta($id,'rank_math_focus_keyword',true)) as $existing)
                 if(strcasecmp(trim($existing),$keyword)===0)return false;
-            }
-        }
+        }while(count($q->posts)===100);
         return true;
+    }
+
+    /** Refine a reused broad phrase to the same article's evidenced subject, never switch topics. */
+    public static function valid_keyword_refinement($before,$after,$post_id=0){
+        $old=trim((string)($before['focus_keyword']??''));$new=trim((string)($after['focus_keyword']??''));
+        if(!$old || !$new || strpos($new,',')!==false || GNF5_Utils::word_count($new)>8 || self::focus_keyword_is_unique($old,$post_id))return false;
+        if(self::normalize_title($old)===self::normalize_title($new) || !self::contains_exact_phrase($new,$old) || !self::focus_keyword_is_unique($new,$post_id))return false;
+        $extra=array_diff(self::link_terms($new),self::link_terms($old));
+        $context=self::link_terms(($before['title']??'').' '.($before['content_html']??''));
+        if(!$extra || array_diff($extra,$context))return false;
+        $checks=self::text_checks($after);
+        foreach(array('title_keyword','title_start','description','slug','introduction','body_keyword','heading') as $key)if($checks[$key]['status']!=='PASS')return false;
+        return true;
+    }
+
+    public static function repair_targets($article,$post_id=0){
+        $words=GNF5_Utils::word_count($article['content_html']??'');$target=max(650,$words);
+        $keyword=trim((string)($article['focus_keyword']??''));
+        return array('current_words'=>$words,'minimum_supported_words'=>600,'suggested_supported_words'=>$target,
+            'current_keyword_occurrences'=>self::keyword_occurrences($article['content_html']??'',$keyword),
+            'current_exact_phrase_density'=>round(self::keyword_density($article['content_html']??'',$keyword),2),
+            'target_density_percent'=>1.5,'target_occurrences_at_suggested_length'=>(int)round($target*0.015),
+            'keyword_reused'=>!self::focus_keyword_is_unique($keyword,$post_id),
+            'instruction'=>'Recalculate occurrences for final word count; spread naturally, never append repeated keywords. Refine a reused phrase only with a factual article-specific qualifier and update all placements together.');
     }
 
     public static function has_number($title){return (bool)preg_match('/\b\d+\b/u',(string)$title);}
@@ -226,7 +248,8 @@ class GNF5_SEO {
     }
 
     public static function keyword_occurrences($html,$keyword){
-        $text=html_entity_decode(wp_strip_all_tags((string)$html),ENT_QUOTES|ENT_HTML5,'UTF-8');
+        $html=preg_replace('~</?(?:p|h[1-6]|li|div|br|tr|td|th|blockquote)\b[^>]*>~iu',' ',(string)$html);
+        $text=html_entity_decode(wp_strip_all_tags($html),ENT_QUOTES|ENT_HTML5,'UTF-8');
         $keyword=trim((string)$keyword);
         if($keyword==='')return 0;
 
@@ -535,20 +558,25 @@ class GNF5_SEO {
         return $inserted && $out!==''?$out:$html;
     }
 
-    public static function insert_internal_links($html, $post_id, $cat_id) {
-        if (empty(GNF5_Utils::settings()['internal_links']) || !class_exists('DOMDocument')) return $html;
-        $kw = trim((string)get_post_meta($post_id, 'rank_math_focus_keyword', true));
-        if ($kw === '') return $html;
-        $terms=self::link_terms($kw.' '.get_the_title($post_id));
+    public static function insert_internal_links($html, $post_id, $cat_id,$focus_keyword='',$article_title='',$original_keyword='') {
+        if (empty(GNF5_Utils::settings()['internal_links']) || !class_exists('DOMDocument')) {
+            update_post_meta($post_id,'_gnf5_internal_link_note',empty(GNF5_Utils::settings()['internal_links'])?'Internal linking is OFF in plugin settings.':'Internal linking unavailable: PHP DOM extension is missing.');return $html;
+        }
+        $kw = trim((string)($focus_keyword!==''?$focus_keyword:get_post_meta($post_id, 'rank_math_focus_keyword', true)));
+        if ($kw === '') {update_post_meta($post_id,'_gnf5_internal_link_note','No saved focus keyword is available for relevant-link matching.');return $html;}
+        $terms=self::link_terms($kw.' '.($article_title!==''?$article_title:get_the_title($post_id)));
+        if($original_keyword==='')$original_keyword=((array)get_post_meta($post_id,'_gnf5_article_data',true))['original_focus_keyword']??'';
+        $base_keyword=$original_keyword!=='' && count(self::link_terms($original_keyword))>=2 && self::contains_exact_phrase($kw,$original_keyword)?$original_keyword:$kw;
         $args=array('post_type'=>'post','post_status'=>'publish','numberposts'=>40,'post__not_in'=>array($post_id),'has_password'=>false);
         $posts=get_posts(array_merge($args,array('category'=>$cat_id)));$seen=array();$ranked=array();
         // Broaden beyond exact-keyword matches and beyond this category, with bounded queries.
-        foreach(array_slice(self::link_terms($kw),0,2) as $term)$posts=array_merge($posts,get_posts(array_merge($args,array('s'=>$term))));
+        foreach(array_slice($terms,0,6) as $term)$posts=array_merge($posts,get_posts(array_merge($args,array('numberposts'=>20,'s'=>$term))));
         foreach($posts as $p){
             if(isset($seen[$p->ID]) || $p->post_password || $p->post_status!=='publish')continue;$seen[$p->ID]=true;
             $other=trim(explode(',',(string)get_post_meta($p->ID,'rank_math_focus_keyword',true))[0]);
             $shared=count(array_intersect($terms,self::link_terms($p->post_title.' '.$other)));
-            $exact=count(self::link_terms($kw))>=2 && self::contains_exact_phrase($p->post_title.' '.$other,$kw);
+            $target_context=$p->post_title.' '.$other.' '.GNF5_Utils::safe_substr(wp_strip_all_tags($p->post_excerpt.' '.$p->post_content),0,4000);
+            $exact=count(self::link_terms($base_keyword))>=2 && self::contains_exact_phrase($target_context,$base_keyword);
             if(!$exact && $shared<2)continue;
             $ranked[]=array('post'=>$p,'anchor'=>$other,'rank'=>$shared+($exact?4:0)+(has_category($cat_id,$p)?1:0));
         }
@@ -560,7 +588,10 @@ class GNF5_SEO {
             if(!$inserted)$related[]='<li><a href="'.esc_url($url).'">'.esc_html($p->post_title).'</a></li>';
             if(++$count>=3)break;
         }
-        return $html.($related?'<h2>Related reading</h2><ul>'.implode('',$related).'</ul>':'');
+        $result=$html.($related?'<h2>Related reading</h2><ul>'.implode('',$related).'</ul>':'');
+        $audit=self::anchor_audit($result,$post_id);
+        update_post_meta($post_id,'_gnf5_internal_link_note',$audit['valid_internal']?'Relevant published internal links: '.$audit['valid_internal'].'.':'No relevant public published post was found in the bounded title/keyword/content search. Draft, private and unrelated posts are not linked.');
+        return $result;
     }
 
     /** Only for generated article data, never run over human-edited WordPress content. */
@@ -654,11 +685,11 @@ class GNF5_SEO {
         $add('body_keyword',self::contains_exact_phrase($plain,$kw),'Use the focus keyword naturally in the article body.');
         $add('heading',self::heading_contains_exact_phrase($html,$kw),'Use the focus keyword in a relevant H2 or H3.');
         $add('length',$words>=600,'Article has '.$words.' words. Aim for at least 600, preferably 1000–1200, only with supported useful explanations. If evidence cannot support expansion, provide short_reason; never pad or invent facts.');
-        $add('density',$density>=1 && $density<=1.5,'Focus-keyword density is '.round($density,2).'%. Aim around 1–1.5% through natural references, never repetitive filler.');
+        $add('density',$density>=1.3 && $density<=1.7,'Focus-keyword density is '.round($density,2).'%, with '.self::keyword_occurrences($html,$kw).' exact occurrences in '.$words.' words. Aim near 1.5% (about '.max(1,(int)round(max(650,$words)*0.015)).' natural occurrences at '.max(650,$words).' words); recalculate after expansion, never add repetitive filler.');
         $add('url_length',strlen($d['slug']??'')<=75,'Keep the URL slug concise (75 characters or fewer).');
         $add('sentiment',self::has_sentiment_word($title),'Optional: use a positive or negative title word only if verified facts justify it; neutral headlines are acceptable.',false);
         $add('power_word',self::has_power_word($title),'Optional: use an accurate descriptive power word only when supported; do not exaggerate.',false);
-        $add('title_number',self::has_number($title),'Optional: use a verified number or truthful list count only when useful; never invent a date or number.',false);
+        $add('title_number',self::has_number($title),'Include a useful number from verified facts, or an accurate count of distinct items actually discussed. If neither is supported, explain why in seo_unresolved; never invent a date, statistic or list.');
         preg_match_all('/<p\b[^>]*>(.*?)<\/p>/is',$html,$pars);$long=false;foreach($pars[1] as $p)if(GNF5_Utils::word_count($p)>120)$long=true;
         $add('paragraphs',!$long,'Break long paragraphs into shorter readable paragraphs.');
         return $checks;
@@ -672,19 +703,26 @@ class GNF5_SEO {
     }
 
     /** Accept real progress without trading away already-passing text checks. */
-    public static function text_repair_progress($before,$after) {
-        if(($before['focus_keyword']??'')!==($after['focus_keyword']??''))return false;
+    public static function text_repair_progress($before,$after,$post_id=0) {
+        $refined=($before['focus_keyword']??'')!==($after['focus_keyword']??'');
+        if($refined && !self::valid_keyword_refinement($before,$after,$post_id))return false;
+        $old_density=self::keyword_density($before['content_html']??'',$before['focus_keyword']??'');
+        $new_density=self::keyword_density($after['content_html']??'',$after['focus_keyword']??'');
+        if($old_density<=1.7 && $new_density>1.7)return false;
         $old=self::text_checks($before);$new=self::text_checks($after);$improved=false;
         foreach($old as $key=>$check){
             if($check['repair'] && $check['status']==='PASS' && $new[$key]['status']!=='PASS')return false;
             if($check['status']!=='PASS' && $new[$key]['status']==='PASS')$improved=true;
         }
-        if($improved)return true;
+        if($improved || $refined)return true;
         // Crossing 600 can take more than one bounded repair. Factual/originality
         // review still runs before any longer candidate is saved.
         $was=GNF5_Utils::word_count($before['content_html']??'');
         $now=GNF5_Utils::word_count($after['content_html']??'');
-        return $was<600 && $now>=$was+60;
+        if($was<600 && $now>=$was+40)return true;
+        $old_density=self::keyword_density($before['content_html']??'',$before['focus_keyword']??'');
+        $new_density=self::keyword_density($after['content_html']??'',$after['focus_keyword']??'');
+        return $now>=$was && abs($old_density-1.5)-abs($new_density-1.5)>=0.1;
     }
 
     public static function checklist($post_id) {
@@ -692,7 +730,7 @@ class GNF5_SEO {
             'focus_keyword'=>get_post_meta($post_id,'rank_math_focus_keyword',true),'meta_description'=>get_post_meta($post_id,'rank_math_description',true),
             'slug'=>get_post_field('post_name',$post_id),'content_html'=>get_post_field('post_content',$post_id));
         $checks=self::text_checks($d);$links=self::anchor_audit($d['content_html'],$post_id);
-        $checks['internal_links']=array('status'=>$links['valid_internal']?'PASS':'REVIEW','message'=>'Relevant published internal links: '.$links['valid_internal'].'. If zero, enable internal links and ensure related published posts exist.');
+        $checks['internal_links']=array('status'=>$links['valid_internal']?'PASS':'REVIEW','message'=>'Relevant published internal links: '.$links['valid_internal'].'. '.(get_post_meta($post_id,'_gnf5_internal_link_note',true)?:'Enable internal links and ensure related published posts exist.'));
         $checks['external_links']=array('status'=>$links['external']?'PASS':'OPTIONAL','message'=>'External links: '.$links['external'].'. Zero is allowed when disabled, empty or no suitable contextual link exists.');
         $checks['dofollow']=array('status'=>$links['dofollow_external']?'PASS':'OPTIONAL','message'=>'Followable external links: '.$links['dofollow_external'].'. Only validated editorial links are added.');
         $checks['keyword_unique']=array('status'=>self::focus_keyword_is_unique($d['focus_keyword'],$post_id)?'PASS':'REVIEW','message'=>'A reused focus keyword needs editorial review; do not change the article topic simply to pass this check.');

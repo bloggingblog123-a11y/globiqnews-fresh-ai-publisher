@@ -586,6 +586,7 @@ class GNF5_Admin {
         echo '<details open><summary><strong>Non-image SEO checklist</strong></summary><p>These local checks work without a scoring service. Rank Math calculates the actual score separately. REVIEW is an editorial item, not a failed article. Neutral titles and shorter articles may be appropriate when the evidence requires them.</p><table class="widefat striped"><tbody>';
         foreach(GNF5_SEO::checklist($post->ID) as $name=>$check)echo '<tr><th>'.esc_html(ucwords(str_replace('_',' ',$name))).'</th><td>'.esc_html($check['status']).'</td><td>'.esc_html($check['message']).'</td></tr>';
         echo '</tbody></table><p>'.esc_html(get_post_meta($post->ID,'_gnf5_seo_repair_note',true)).'</p></details>';
+        foreach((array)get_post_meta($post->ID,'_gnf5_seo_unresolved',true) as $reason)echo '<p><strong>SEO target needs review:</strong> '.esc_html($reason).'</p>';
         echo '<p><a class="button" href="'.esc_url(get_preview_post_link($post->ID)).'" target="_blank" rel="noopener">Preview</a> <a class="button" href="'.esc_url(get_edit_post_link($post->ID)).'">Edit Draft</a> ';
         if(current_user_can('delete_post',$post->ID))echo '<a class="button" href="'.esc_url(get_delete_post_link($post->ID)).'">Move Draft to Trash</a> ';
         echo '</p>';
