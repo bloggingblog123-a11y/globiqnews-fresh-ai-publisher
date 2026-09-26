@@ -1,11 +1,9 @@
-# GlobiqNews Fresh AI Publisher 6.0.5
+# GlobiqNews Fresh AI Publisher 6.0.6
 
-Fixes an older settings tab silently overwriting newer category settings after a successful save. Category Save and the full-page Save now check the revision originally displayed. Conflicting forms report that nothing was saved instead of replacing newer values. A successful category save updates the page revision so subsequent category or global saves work without reloading.
+Improves non-image SEO repair for drafts missing the opening focus keyword, containing fewer than 600 words, or missing a factual number in the SEO title. Generation and repair now prioritize these points, retain the same focus keyword and protect text checks that already pass. Title numbers must come from verified facts or a useful, accurate list count. Articles with insufficient evidence remain short with a reason rather than being padded with invented details.
 
-Category saves verify the committed database row. Empty/truncated category requests cannot report success, and incomplete full-page forms are rejected before writing. Save feedback appears beside the category as well as at the top of the page. Images and Manual External Links retain their separate Save buttons and are preserved by general/global saves.
+Repair accepts meaningful progress toward 600 words across up to three attempts and rejects changes that break an already-passing text check. The opening check requires the keyword in the first paragraph as well as the first 10 percent, rather than accepting a heading alone. Old exhausted drafts receive one new bounded repair budget under this policy when explicitly improved or processed again. Human edits remain protected.
 
-Checked general category fields, RSS/Source clearing, GDELT, author, timing, post limits, instructions, image controls, manual links, global controls, blank-key retention, stale tabs and queue regressions. All articles remain Draft. Existing settings and GitHub updates are retained.
+New drafts use these checks automatically. For an existing unchanged generated draft, open its editor and use Improve SEO & Links in the plugin report. Review remaining checklist items. Gemini access and sufficient verified research are still required. Text repair does not require Node.js. Actual Rank Math score calculation still needs the editor or a compatible configured background analyzer; this release does not solve hosting/analyzer compatibility. A score of 80+ is not guaranteed.
 
-After updating to 6.0.5, reload the plugin settings page once. If a conflict is reported, copy your unsaved edits, reload and apply them again. Update through WordPress → Plugins → Check for updates → Update now; do not delete the plugin.
-
-Validation: 326 isolated WordPress checks and eight JavaScript checks passed. Real local browser saves, refresh persistence, stale-tab rejection and a current full-page save were verified. Production hosting was not tested; the reproduced overwrite path is confirmed, but it is not proof of the exact cause on your live site. See TEST-REPORT-6.0.5.md.
+Image settings, image-generation code and image repair behavior are unchanged. All generated articles remain Draft. Update using WordPress Plugins → Check for updates → Update now; do not delete the plugin.

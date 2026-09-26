@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GlobiqNews Fresh AI Publisher
  * Description: Category-isolated research and original draft writing with optional GDELT discovery, quality reports, manual images or original WebP images, genuine Rank Math analysis and human publishing.
- * Version: 6.0.5
+ * Version: 6.0.6
  * Plugin URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Update URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Author: GlobiqNews
@@ -12,7 +12,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('GNF5_VERSION', '6.0.5');
+define('GNF5_VERSION', '6.0.6');
 define('GNF5_FILE', __FILE__);
 define('GNF5_DIR', plugin_dir_path(__FILE__));
 define('GNF5_URL', plugin_dir_url(__FILE__));

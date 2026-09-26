@@ -398,6 +398,13 @@ class GNF5_Runner {
     /** One bounded, independently quality-checked improvement of an unchanged generated article. */
     public static function repair_scored_post($post_id,$local=false) {
         if(!GNF5_Publish::can_rewrite($post_id))return false;
+        // One fresh bounded budget for this repair policy, including older drafts.
+        // Human-edited drafts are rejected above before any state is changed.
+        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='606'){
+            update_post_meta($post_id,'_gnf5_text_repair_policy','606');
+            delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
+            delete_post_meta($post_id,'_gnf5_seo_repair_stopped');
+        }
         if((int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3){update_post_meta($post_id,'_gnf5_seo_repair_note','Three SEO optimization attempts used. Review remaining items manually; no further AI rewrite was requested.');return false;}
         $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
         if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
@@ -416,9 +423,9 @@ class GNF5_Runner {
         $repaired=GNF5_Writer::repair_for_validation($article,$research,$errors,$cat_id);
         if(is_wp_error($repaired)){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO improvement unavailable: '.GNF5_Utils::redact($repaired->get_error_message()));return false;}
         $same=true;foreach(array('title','seo_title','focus_keyword','slug','meta_description','excerpt','content_html') as $key)if(($article[$key]??'')!==($repaired[$key]??''))$same=false;
-        if($same || ($local && count(GNF5_SEO::text_feedback($repaired))>=count($errors))){
+        if($same || !GNF5_SEO::text_repair_progress($article,$repaired)){
             update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
-            update_post_meta($post_id,'_gnf5_seo_repair_note','No measurable text-check improvement was returned. Original text retained; review the checklist.');return false;
+            update_post_meta($post_id,'_gnf5_seo_repair_note','No text-check progress without regressions was returned. Original text retained; review the checklist.');return false;
         }
         $report=GNF5_Quality::evaluate($repaired,$research,true);
         if(($report['facts']['status']??'')!=='PASS' || in_array($report['originality']['status']??'UNKNOWN',array('FAIL','UNKNOWN'),true)){
