@@ -563,10 +563,19 @@ class GNF5_Admin {
         $report=is_array($report)?$report:array();$cats=wp_get_post_categories($post->ID);$cat_id=(int)($cats[0]??0);
         $images=GNF5_Quality::images($post->ID,$cat_id);$score=GNF5_Publish::score($post->ID);
         echo '<div class="gnf6-report" data-post="'.absint($post->ID).'"><p><strong>Generated content requires human review and manual publishing.</strong></p>';
-        if(!empty($report['content_hash']) && !hash_equals($report['content_hash'],hash('sha256',$post->post_content)))echo '<p><strong>Article changed after these checks. Recheck before relying on this report.</strong></p>';
+        if((!empty($report['review_hash']) && !hash_equals($report['review_hash'],GNF5_Quality::review_hash($post->ID))) || (!empty($report['content_hash']) && !hash_equals($report['content_hash'],hash('sha256',$post->post_content))))echo '<p><strong>Article or metadata changed after these checks. Recheck before relying on this report.</strong></p>';
+        $title_report=(array)get_post_meta($post->ID,'_gnf5_title_report',true);
+        if(!empty($title_report['review_hash']) && !hash_equals($title_report['review_hash'],GNF5_Quality::review_hash($post->ID)))echo '<p><strong>Title report is stale. Recheck Title Originality after saving your changes.</strong></p>';
+        echo '<h3>GlobiqNews Original Content Report</h3>';
         $rows=array('Status'=>get_post_status($post->ID),'Word count'=>GNF5_Utils::word_count($post->post_content),
             'Sources actually researched'=>$research['source_count']??'NOT CHECKED','Independent publisher estimate'=>$research['independent_source_estimate']??'UNKNOWN',
             'Originality'=>$report['originality']['status']??'NOT CHECKED','Factual review'=>$report['facts']['status']??'NOT CHECKED',
+            'Original Headline Check'=>$title_report['status']??'NOT CHECKED','Source Titles Compared'=>$title_report['source_titles_compared']??'NOT CHECKED',
+            'Exact Source Title Match'=>isset($title_report['exact_source_match'])?($title_report['exact_source_match']?'YES':'NO'):'NOT CHECKED',
+            'Near Source Title Match'=>isset($title_report['near_source_match'])?($title_report['near_source_match']?'YES':'NO'):'NOT CHECKED',
+            'Existing GlobiqNews Match'=>isset($title_report['existing_site_match'])?($title_report['existing_site_match']?'YES':'NO'):'NOT CHECKED',
+            'Title Attempts'=>$title_report['attempts']??'NOT CHECKED','Description/excerpt originality'=>$report['metadata_originality']['status']??'NOT CHECKED',
+            'Editorial review'=>$report['editorial_state']??'MANUAL REVIEW REQUIRED',
             'Added Value Score'=>isset($report['added_value']['score'])?$report['added_value']['score'].' / 100':'NOT CHECKED',
             'Rank Math score'=>$score===null?'NOT CHECKED':$score.' / 100','SEO optimizations'=>absint(get_post_meta($post->ID,'_gnf5_seo_repair_attempts',true)).' / 3',
             'Image generation'=>$images['generation'],'Featured image'=>$images['featured'],'Inline image'=>$images['inline'],'Image SEO'=>$images['seo']);
@@ -580,12 +589,12 @@ class GNF5_Admin {
         echo '<p><a class="button" href="'.esc_url(get_preview_post_link($post->ID)).'" target="_blank" rel="noopener">Preview</a> <a class="button" href="'.esc_url(get_edit_post_link($post->ID)).'">Edit Draft</a> ';
         if(current_user_can('delete_post',$post->ID))echo '<a class="button" href="'.esc_url(get_delete_post_link($post->ID)).'">Move Draft to Trash</a> ';
         echo '</p>';
-        foreach(array('Research and sources'=>$research,'Article quality evidence'=>$report,'Image file and ALT checks'=>$images,'Topic opportunity'=>get_post_meta($post->ID,'_gnf5_opportunity',true)) as $label=>$data){
+        foreach(array('Research and sources'=>$research,'View Fact Sheet'=>$research['fact_sheet']??$research['facts']??array(),'View Source Headlines'=>GNF5_Titles::source_titles((array)$research),'View Title Originality'=>$title_report,'Article quality evidence'=>$report,'Image file and ALT checks'=>$images,'Topic opportunity'=>get_post_meta($post->ID,'_gnf5_opportunity',true)) as $label=>$data){
             echo '<details><summary>'.esc_html($label).'</summary><pre style="max-height:360px;overflow:auto;white-space:pre-wrap">'.esc_html(wp_json_encode($data,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)).'</pre></details>';
         }
         if(current_user_can('manage_options') && get_post_status($post->ID)==='draft'){
             echo '<p>Save editor changes before using these actions.</p><p>';
-            foreach(array('quality'=>'Recheck Originality, Value & Facts','improve_seo'=>'Improve SEO & Links','seo'=>'Recheck Rank Math','images'=>'Recheck Images / Image SEO','links'=>'Recheck Links','regenerate'=>'Regenerate Draft','generate_images'=>'Generate Missing Images','regenerate_images'=>'Regenerate Generated Images','remove_images'=>'Remove Generated Images') as $action=>$label)
+            foreach(array('quality'=>'Recheck Originality, Value & Facts','recheck_title'=>'Recheck Title Originality','regenerate_title'=>'Regenerate Title Only','improve_seo'=>'Improve SEO & Links','seo'=>'Recheck Rank Math','images'=>'Recheck Images / Image SEO','links'=>'Recheck Links','regenerate'=>'Regenerate Draft','generate_images'=>'Generate Missing Images','regenerate_images'=>'Regenerate Generated Images','remove_images'=>'Remove Generated Images') as $action=>$label)
                 echo '<button type="button" class="button gnf6-action" data-action="'.esc_attr($action).'">'.esc_html($label).'</button> ';
             echo '</p><details><summary>Manual image ALT text — suggestions to review</summary><p>Suggested text uses attachment titles, not visual recognition. Edit it to accurately describe your own image before saving.</p>';
             foreach($images['attachments'] as $image){$id=$image['id'];$alt=get_post_meta($id,'_wp_attachment_image_alt',true);$suggestion=trim((string)get_post_field('post_title',$id));
@@ -598,22 +607,24 @@ class GNF5_Admin {
     public static function ajax_article_action() {
         self::guard();$id=absint($_POST['post_id']??0);$action=sanitize_key($_POST['task']??'');
         if(!current_user_can('edit_post',$id) || get_post_type($id)!=='post' || get_post_meta($id,'_gnf5_generated_by',true)!=='fresh-v5' || get_post_status($id)!=='draft')wp_send_json_error(array('message'=>'A permitted plugin Draft is required.'),403);
-        if(in_array($action,array('regenerate','regenerate_images','remove_images'),true) && ($_POST['confirmed']??'')!=='yes')wp_send_json_error(array('message'=>'Confirm the specific replacement/removal action first.'),400);
+        if(in_array($action,array('regenerate','regenerate_title','regenerate_images','remove_images'),true) && ($_POST['confirmed']??'')!=='yes')wp_send_json_error(array('message'=>'Confirm the specific replacement/removal action first.'),400);
         $cats=wp_get_post_categories($id);$cat_id=(int)($cats[0]??0);
         if(!GNF5_Utils::acquire_lock($cat_id))wp_send_json_error(array('message'=>'Another article is processing. Please retry shortly.'),409);
         $result=true;$message='Checks updated. Draft remains unpublished.';
         try{
             GNF5_Sources::reset_budget();
             if($action==='regenerate'){$result=GNF5_Runner::regenerate($id);$message='Draft regeneration finished. Review before manually publishing.';}
+            elseif($action==='regenerate_title'){$result=GNF5_Titles::regenerate_post($id);$message='Headline and SEO title updated after originality and factual checks. Body and images unchanged.';}
+            elseif($action==='recheck_title'){$result=GNF5_Titles::recheck_post($id);$message='Title originality: '.(is_array($result)?$result['status']:'NOT CHECKED').'.';}
             elseif($action==='improve_seo'){$result=GNF5_Runner::improve_seo($id);$message='Link and non-image SEO improvement finished. '.get_post_meta($id,'_gnf5_seo_repair_note',true).' Review the checklist and reopen the editor to see Rank Math’s actual score.';}
             elseif($action==='seo'){GNF5_RankMath::reset_retry($id);GNF5_RankMath::run($id);$message='Rank Math recheck finished. Score: '.(GNF5_Publish::score($id)??'NOT CHECKED').'. '.get_post_meta($id,'_gnf5_seo_error',true);}
             elseif($action==='quality'){
                 $research=GNF5_Research::load($id,true);
                 if(is_wp_error($research))$result=$research;
                 else{
-                    $article=array('title'=>get_the_title($id),'content_html'=>get_post_field('post_content',$id));
-                    $hash=hash('sha256',$article['content_html']);$report=GNF5_Quality::evaluate($article,$research,true);
-                    if($hash!==hash('sha256',get_post_field('post_content',$id)))$result=new WP_Error('changed','Article changed during checking; stale report discarded.');
+                    $article=GNF5_Quality::current_article($id);
+                    $hash=GNF5_Quality::review_hash($id);$report=GNF5_Quality::evaluate($article,$research,true,$id);
+                    if($hash!==GNF5_Quality::review_hash($id))$result=new WP_Error('changed','Article changed during checking; stale report discarded.');
                     else GNF5_Quality::store($id,$report);
                 }
             }elseif($action==='images'){
@@ -635,7 +646,7 @@ class GNF5_Admin {
                 else $result=GNF5_Runner::image_action($id,$action);
             }else $result=new WP_Error('action','Unknown action.');
         }catch(Throwable $e){$result=new WP_Error('action_failed',GNF5_Utils::redact($e->getMessage()));}
-        finally{GNF5_Utils::release_lock($cat_id);}
+        finally{GNF5_Titles::release();GNF5_Utils::release_lock($cat_id);}
         if(is_wp_error($result))wp_send_json_error(array('message'=>$result->get_error_message()));
         wp_send_json_success(array('message'=>$message.' Refresh to view the report.'));
     }

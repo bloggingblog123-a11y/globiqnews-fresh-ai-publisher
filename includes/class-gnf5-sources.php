@@ -791,7 +791,7 @@ class GNF5_Sources {
         if (is_wp_error($parsed)) return $parsed;
         if (GNF5_Utils::word_count($parsed['text']) < 40) return new WP_Error('thin_source','Insufficient accessible source facts.');
         $parsed['text'] = GNF5_Utils::safe_substr($parsed['text'],0,22000);
-        $parsed['headings']=array();$parsed['links']=array();$parsed['published_at']='';$parsed['source_author']='';
+        $parsed['headings']=array();$parsed['links']=array();$parsed['published_at']='';$parsed['source_author']='';$parsed['description']='';
         if (class_exists('DOMDocument')) {
             libxml_use_internal_errors(true);$doc=new DOMDocument();
             @$doc->loadHTML('<?xml encoding="utf-8" ?>'.$f['body'],LIBXML_NOWARNING|LIBXML_NOERROR|LIBXML_NONET);
@@ -812,6 +812,7 @@ class GNF5_Sources {
                 $key=strtolower($m->getAttribute('property') ?: $m->getAttribute('name'));
                 if(in_array($key,array('article:published_time','date','datepublished'),true))$parsed['published_at']=sanitize_text_field($m->getAttribute('content'));
                 if(in_array($key,array('author','article:author'),true))$parsed['source_author']=sanitize_text_field($m->getAttribute('content'));
+                if(in_array($key,array('description','og:description'),true))$parsed['description']=GNF5_Utils::safe_substr(sanitize_text_field($m->getAttribute('content')),0,2000);
             }
         }
         return $parsed;

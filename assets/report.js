@@ -5,6 +5,7 @@
             box.find('.gnf6-result').text('Save your editor changes before using this action.');return;
         }
         var prompts={regenerate:'Replace this Draft’s title and article text with a newly researched article? Your manual images will be preserved. Review your edits before continuing.',regenerate_images:'Remove and regenerate only this article’s generated images? Manual images will be preserved.',remove_images:'Remove only images generated for this article? Manual images will be preserved.'};
+        prompts.regenerate_title='Replace this Draft’s headline and SEO title after originality and factual checks? The body and images will stay unchanged. Save your current edits first.';
         if(prompts[task]){if(!window.confirm(prompts[task]))return;confirmed='yes';}
         var attachment=parseInt(button.data('attachment')||0,10),alt='';
         if(attachment)alt=box.find('.gnf6-alt[data-attachment="'+attachment+'"]').val()||'';

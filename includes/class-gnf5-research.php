@@ -26,9 +26,13 @@ class GNF5_Research {
             $source['hash']=hash('sha256',self::text($source['text']));$source['fetched_at']=time();
             $sources[]=$source;
             if(count($sources)===1){
+                $priority=array();
                 foreach(array_slice((array)($source['links']??array()),0,6) as $link){
-                    if(preg_match('/official|announcement|press release|report|documentation|statement|research|study|government/i',$link['label'].' '.$link['url']))$candidates[]=array('url'=>$link['url'],'method'=>'Referenced research source');
+                    if(preg_match('/official|announcement|press release|report|documentation|statement|research|study|government/i',$link['label'].' '.$link['url']))$priority[]=array('url'=>$link['url'],'method'=>'Referenced research source');
                 }
+                // Fetch likely original documents before filling the source budget
+                // with supporting publishers. Classification still requires evidence.
+                array_splice($candidates,$i+1,0,$priority);
             }
         }
         if(!$sources)return new WP_Error('research_failed','No accessible source contained enough research material. '.($errors[0]['reason']??''));
@@ -39,6 +43,8 @@ class GNF5_Research {
         if(count($research['facts'])<2)return new WP_Error('facts_insufficient','Too few facts with valid source evidence were extracted. No article was created.');
         $research['discovery_method']=sanitize_text_field($item['method']??'Manual URL');
         $research['errors']=$errors;
+        $research['source_titles']=array_values(array_unique(array_filter(array_merge(array_column($candidates,'title'),array_column($sources,'title')))));
+        $research['discovery_snippets']=array_values(array_filter(array_map(function($row){return GNF5_Utils::safe_substr(self::text($row['fallback_text']??''),0,2000);},$candidates)));
         return $research;
     }
 
@@ -80,7 +86,7 @@ class GNF5_Research {
         foreach($conflicts as $conflict)foreach($conflict['source_ids'] as $id)$used[$id]=true;
         $relevant=array_values(array_filter($sources,function($source)use($used){return isset($used[$source['id']]);}));
         $primaries=array_values(array_filter($primaries,function($source)use($used){return isset($used[$source['source']]);}));
-        return array('version'=>1,'created_at'=>time(),'sources'=>$sources,'facts'=>$facts,'conflicts'=>$conflicts,
+        return array('version'=>2,'created_at'=>time(),'sources'=>$sources,'facts'=>$facts,'conflicts'=>$conflicts,
             'uncertainties'=>array_map('sanitize_text_field',array_slice((array)($raw['uncertainties']??array()),0,20)),
             'primary_sources'=>$primaries,'rejected_facts'=>$rejected,'source_count'=>count($relevant),'fetched_source_count'=>count($sources),
             'independent_source_estimate'=>self::independent_count($relevant),'verification'=>'Counts include only sources supporting retained facts or conflicts. Evidence excerpts checked against fetched text; extraction and primary-source classification are AI-assisted, not human verification.');
@@ -89,6 +95,7 @@ class GNF5_Research {
     public static function independent_count($sources) {
         $accepted=array();$domains=array();
         foreach($sources as $source){
+            if(empty($source['text']))continue;
             $domain=GNF5_Topics::publisher_key($source['url']);if(isset($domains[$domain]))continue;
             $words=GNF5_Quality::tokens($source['text']);$shingles=GNF5_Quality::shingles($words,7);$syndicated=false;
             foreach($accepted as $other)if(count(array_intersect_key($shingles,$other))/max(1,min(count($shingles),count($other)))>0.6){$syndicated=true;break;}
@@ -108,13 +115,29 @@ class GNF5_Research {
             'source_count'=>$research['source_count']??0,'independent_source_estimate'=>$research['independent_source_estimate']??0);
     }
 
+    public static function fact_sheet($research) {
+        $sheet=array('facts_by_kind'=>array(),'publication_dates'=>array(),'primary_sources'=>$research['primary_sources']??array(),'supporting_sources'=>array(),'multiple_source_fact_ids'=>array(),'primary_source_fact_ids'=>array(),'conflicting_claims'=>$research['conflicts']??array(),'unverified_claims'=>$research['uncertainties']??array());
+        $primary=array_column($sheet['primary_sources'],'source');$sources=array_column($research['sources']??array(),null,'id');
+        foreach($research['facts']??array() as $fact){
+            $sheet['facts_by_kind'][$fact['kind']][]=$fact;$used=array();
+            foreach($fact['evidence'] as $e)if(isset($sources[$e['source']]))$used[$e['source']]=$sources[$e['source']];
+            if(self::independent_count(array_values($used))>1)$sheet['multiple_source_fact_ids'][]=$fact['id'];
+            if(array_intersect(array_keys($used),$primary))$sheet['primary_source_fact_ids'][]=$fact['id'];
+        }
+        foreach($sources as $source){$sheet['publication_dates'][$source['id']]=$source['published_at']??'';$sheet['supporting_sources'][]=array_intersect_key($source,array_flip(array('id','url','title','source_author')));}
+        $sheet['verification']='Evidence-backed extraction and source-independence heuristic; not independent human verification.';
+        return $sheet;
+    }
+
     public static function store($post_id, $research) {
         $texts=array();$metadata=$research;
+        $metadata['fact_sheet']=self::fact_sheet($research);
         foreach($metadata['sources'] as &$source){
-            $texts[$source['id']]=array_intersect_key($source,array_flip(array('id','url','title','text','headings')));
-            unset($source['text'],$source['links']);
+            $texts[$source['id']]=array_intersect_key($source,array_flip(array('id','url','title','text','headings','description')));
+            unset($source['text'],$source['links'],$source['description']);
         }unset($source);
         // Temporary private comparison text is bounded (5 x 22k characters), expires after one day.
+        $texts['_discovery_snippets']=$research['discovery_snippets']??array();unset($metadata['discovery_snippets']);
         set_transient('gnf5_research_text_'.$post_id,$texts,DAY_IN_SECONDS);
         update_post_meta($post_id,'_gnf5_research',$metadata);
         update_post_meta($post_id,'_gnf5_source_facts',self::writer_facts($research));
@@ -124,11 +147,12 @@ class GNF5_Research {
         $research=get_post_meta($post_id,'_gnf5_research',true);
         if(!is_array($research) || empty($research['facts']))return new WP_Error('research_missing','No structured research exists for this legacy draft. Use explicit regeneration after reviewing your edits.');
         $texts=get_transient('gnf5_research_text_'.$post_id);
+        $research['discovery_snippets']=is_array($texts)?($texts['_discovery_snippets']??array()):array();
         foreach($research['sources'] as &$source){
             if(is_array($texts) && isset($texts[$source['id']]))$source=array_merge($source,$texts[$source['id']]);
             elseif($refresh){
                 $fresh=GNF5_Sources::extract_article($source['url']);
-                if(!is_wp_error($fresh))$source=array_merge($source,array_intersect_key($fresh,array_flip(array('text','headings','title'))));
+                if(!is_wp_error($fresh))$source=array_merge($source,array_intersect_key($fresh,array_flip(array('text','headings','title','description'))));
             }
         }unset($source);
         return $research;

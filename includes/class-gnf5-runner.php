@@ -271,6 +271,10 @@ class GNF5_Runner {
     }
 
     private static function process_article($item,$cat_id,$cs,$trigger) {
+        try{return self::process_article_checked($item,$cat_id,$cs,$trigger);}
+        finally{GNF5_Titles::release();}
+    }
+    private static function process_article_checked($item,$cat_id,$cs,$trigger) {
         $author=GNF5_Utils::valid_author_id($cs['author_id']??0);
         if(!$author)return new WP_Error('author',get_cat_name($cat_id).': an author must be selected.');
         $url=GNF5_Utils::normalize_url($item['url']??'');
@@ -351,9 +355,14 @@ class GNF5_Runner {
             update_post_meta($post_id,'_gnf5_final_word_count',GNF5_Utils::word_count($article['content_html']));
             GNF5_Publish::checkpoint($post_id);
             self::optimize_text($post_id);
+            $latest=get_post_meta($post_id,'_gnf5_article_data',true);
+            if(is_array($latest) && !empty($latest['quality']))$article=$latest;
             if($image_error){
                 GNF5_Utils::set_state($post_id,'image_pending','Draft body is ready. Optional image processing: '.$image_error);
                 update_post_meta($post_id,'_gnf5_validation_errors',array($image_error));
+            }elseif(!GNF5_Quality::permits_seo($article['quality']??array())){
+                GNF5_Utils::clear_recovery_state($post_id);
+                GNF5_Utils::set_state($post_id,'manual_review','MANUAL REVIEW REQUIRED: '.implode(' ',GNF5_Quality::review_reasons($article['quality']??array())));
             }else{
                 GNF5_Utils::clear_recovery_state($post_id);
                 GNF5_Publish::wait_for_score($post_id,$is_recovery);
@@ -398,6 +407,20 @@ class GNF5_Runner {
     /** One bounded, independently quality-checked improvement of an unchanged generated article. */
     public static function repair_scored_post($post_id,$local=false) {
         if(!GNF5_Publish::can_rewrite($post_id))return false;
+        $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
+        if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
+        $quality=$article['quality']??array();
+        if(($quality['version']??0)<2){
+            $before_review=self::edit_token($post_id);
+            $quality=GNF5_Quality::evaluate($article,$research,true,$post_id);
+            if(!hash_equals($before_review,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return false;
+            $article['quality']=$quality;update_post_meta($post_id,'_gnf5_article_data',$article);
+            GNF5_Publish::checkpoint($post_id);
+        }
+        if(!GNF5_Quality::permits_seo($quality)){
+            GNF5_Quality::store($post_id,$quality);
+            update_post_meta($post_id,'_gnf5_seo_repair_note','Originality/title/factual checks require review before text optimization.');return false;
+        }
         // One fresh bounded budget for this repair policy, including older drafts.
         // Human-edited drafts are rejected above before any state is changed.
         if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='606'){
@@ -406,15 +429,13 @@ class GNF5_Runner {
             delete_post_meta($post_id,'_gnf5_seo_repair_stopped');
         }
         if((int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3){update_post_meta($post_id,'_gnf5_seo_repair_note','Three SEO optimization attempts used. Review remaining items manually; no further AI rewrite was requested.');return false;}
-        $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
-        if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
         $repair_key=hash('sha256',serialize($article));
         if(get_post_meta($post_id,'_gnf5_seo_repair_stopped',true)===$repair_key)return false;
         $token=self::edit_token($post_id);$cats=wp_get_post_categories($post_id);$cat_id=(int)($cats[0]??0);
         $errors=GNF5_SEO::text_feedback($article);
         if(!$local)foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
             // Images, paid Content AI and link placement are not tasks for the text writer.
-            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow'),true))continue;
+            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow','titleHasSentiment','titleHasPowerWords','titleHasNumber'),true))continue;
             if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
         }
         if(!$errors)return false;
@@ -427,8 +448,8 @@ class GNF5_Runner {
             update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
             update_post_meta($post_id,'_gnf5_seo_repair_note','No text-check progress without regressions was returned. Original text retained; review the checklist.');return false;
         }
-        $report=GNF5_Quality::evaluate($repaired,$research,true);
-        if(($report['facts']['status']??'')!=='PASS' || in_array($report['originality']['status']??'UNKNOWN',array('FAIL','UNKNOWN'),true)){
+        $report=GNF5_Quality::evaluate($repaired,$research,true,$post_id);
+        if(!GNF5_Quality::permits_seo($report)){
             update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
             update_post_meta($post_id,'_gnf5_seo_repair_note','Suggested SEO changes failed factual/originality review. Original Draft retained.');
             GNF5_Utils::log('SEO optimization '.$attempt.' rejected: quality evidence insufficient. Original Draft retained.','seo_warning',$cat_id);return false;
@@ -733,7 +754,7 @@ class GNF5_Runner {
         $old=get_post_meta($post_id,'_gnf5_research',true);$support=array();foreach((array)($old['sources']??array()) as $source)$support[]=array('url'=>$source['url'],'method'=>'Saved research reference');
         $research=GNF5_Research::gather(array('url'=>$url,'supporting_items'=>$support,'method'=>'Explicit regeneration'),$cat_id);
         if(is_wp_error($research))return $research;
-        $article=GNF5_Writer::create_article($research,$cat_id);if(is_wp_error($article))return $article;
+        $article=GNF5_Writer::create_article($research,$cat_id,$post_id);if(is_wp_error($article))return $article;
         if(!hash_equals($token,self::edit_token($post_id)))return new WP_Error('manual_edit','Article changed during regeneration; replacement cancelled.');
         $manual=GNF5_Images::manual_image_markup($post_id);
         $result=self::update_post_checked(array('ID'=>$post_id,'post_title'=>$article['title'],'post_name'=>$article['slug'],'post_excerpt'=>$article['excerpt'],

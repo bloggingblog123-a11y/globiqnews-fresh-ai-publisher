@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GlobiqNews Fresh AI Publisher
  * Description: Category-isolated research and original draft writing with optional GDELT discovery, quality reports, manual images or original WebP images, genuine Rank Math analysis and human publishing.
- * Version: 6.0.6
+ * Version: 6.1.0
  * Plugin URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Update URI: https://github.com/bloggingblog123-a11y/globiqnews-fresh-ai-publisher
  * Author: GlobiqNews
@@ -12,7 +12,7 @@
 
 if (!defined('ABSPATH')) { exit; }
 
-define('GNF5_VERSION', '6.0.6');
+define('GNF5_VERSION', '6.1.0');
 define('GNF5_FILE', __FILE__);
 define('GNF5_DIR', plugin_dir_path(__FILE__));
 define('GNF5_URL', plugin_dir_url(__FILE__));
@@ -32,6 +32,8 @@ require_once GNF5_DIR . 'includes/class-gnf5-writer.php';
 require_once GNF5_DIR . 'includes/class-gnf5-research.php';
 require_once GNF5_DIR . 'includes/class-gnf5-quality.php';
 require_once GNF5_DIR . 'includes/class-gnf5-topics.php';
+require_once GNF5_DIR . 'includes/class-gnf5-titles.php';
+add_action('shutdown',array('GNF5_Titles','release'));
 require_once GNF5_DIR . 'includes/class-gnf5-images.php';
 require_once GNF5_DIR . 'includes/class-gnf5-runner.php';
 require_once GNF5_DIR . 'includes/class-gnf6-queue.php';

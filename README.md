@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.6
+# GlobiqNews Fresh AI Publisher — 6.1.0
+
+6.1.0 adds independent title generation/source-site checks, stronger body and metadata originality/factual review, and title-only review actions. Images and Draft-only behavior are unchanged. See [implementation and validation](TEST-REPORT-6.1.0.md).
 
 6.0.6 improves non-image SEO repair for opening keyword placement, evidence-supported length and factual title numbers, without regressing passing checks. Images and Draft-only behavior are unchanged. See [validation](TEST-REPORT-6.0.6.md).
 
