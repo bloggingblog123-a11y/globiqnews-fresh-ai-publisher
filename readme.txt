@@ -1,7 +1,7 @@
 === GlobiqNews Fresh AI Publisher ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 6.0.6
+Stable tag: 6.1.0
 
 Topic discovery, evidence-backed research, original articles and optional images saved as Drafts for human review.
 
@@ -33,13 +33,16 @@ Rank Math PRO and custom editor JavaScript scoring extensions are not verified.
 == Updates ==
 Only published stable GitHub releases with the exact installable ZIP are offered.
 Enable plugin auto-updates in WordPress to receive future published code updates.
-Version 6.0.6 is delivered as a review candidate, not automatically released.
+Published updates preserve saved settings and do not automatically publish articles.
 
 == Changelog ==
+= 6.1.0 =
+Independent headline/source/site comparisons, copied sentence and metadata checks,
+factual review gates, title-only actions. Images unchanged; Draft-only preserved.
 = 6.0.6 =
 Research-first original writing, GDELT, quality reports, protected manual images,
 bounded queues and retries, preserved settings, and Draft-only manual publishing.
 = 5.31.0 =
 Added authenticated optional remote analysis for shared hosting.
 = 5.29.0 =
-Added GitHub plugin updates. Earlier automatic article publishing is retired in 6.0.6.
+Added GitHub plugin updates. Earlier automatic article publishing is retired in 6.0.0.

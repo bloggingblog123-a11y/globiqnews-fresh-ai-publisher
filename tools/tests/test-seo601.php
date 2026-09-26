@@ -32,6 +32,10 @@ $seoMock=function($pre,$args,$url)use(&$seoCalls,&$repairMode,&$lastPrompt,&$rac
 };
 function draft601($cat,$article,$research){
     global $created;
+    // Each independent repair fixture must have its own headline: production now
+    // correctly rejects duplicate titles across drafts before attempting SEO.
+    static $fixture=0;$fixture++;
+    if($fixture>1){$label=array('Methods limits context perspective','Evidence boundaries practical questions','Independent design scope assessment','Cautious interpretation study timeline','Research sampling protocol overview')[$fixture-2]??wp_generate_password(16,false);$article['title']='Solstice laboratory: '.$label;$article['seo_title']=$article['title'];}
     $id=GNF5_Publish::save(array('post_title'=>$article['title'],'post_content'=>GNF5_SEO::build_gutenberg_content($article['content_html']),'post_name'=>$article['slug'],'post_status'=>'draft','post_category'=>array($cat),'meta_input'=>array('_gnf5_generated_by'=>'fresh-v5')),true);$created[]=$id;
     update_post_meta($id,'_gnf5_article_data',$article);GNF5_Research::store($id,$research);GNF5_SEO::save_rank_math($id,$article);GNF5_Publish::checkpoint($id);return $id;
 }

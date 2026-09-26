@@ -74,6 +74,7 @@ class GNF5_Topics {
         $fp=self::fingerprint($research);
         $entry=array('fingerprint'=>$fp,'tokens'=>self::fact_tokens($research),'entities'=>array_values(array_unique(array_map('strtolower',array_column($research['facts'],'subject')))),'time'=>time(),'category'=>(int)$cat_id,'status'=>$status,'post_id'=>(int)$post_id,
             'sources'=>array_column($research['sources'],'url'),'message'=>GNF5_Utils::redact($message));
+        if($post_id)$entry['titles']=array(get_the_title($post_id),get_post_meta($post_id,'rank_math_title',true));
         for($attempt=0;$attempt<20;$attempt++){
             $old=GNF5_Utils::fresh_option('gnf5_topic_history',false);$rows=is_array($old)?$old:array();$since=time()-(int)GNF5_Utils::settings()['history_days']*DAY_IN_SECONDS;
             $rows=array_values(array_filter($rows,function($r)use($fp,$since){return ($r['fingerprint']??'')!==$fp && ($r['time']??0)>$since;}));$rows[]=$entry;$rows=array_slice($rows,-1000);

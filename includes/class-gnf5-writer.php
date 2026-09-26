@@ -115,26 +115,34 @@ class GNF5_Writer {
         return $plan;
     }
 
-    public static function create_article($research, $cat_id) {
+    public static function create_article($research, $cat_id, $ignore_post=0) {
         if(!is_array($research) || empty($research['facts']))return new WP_Error('facts_required','Structured evidence-backed facts are required. Raw source prose cannot be passed to the final writer.');
-        $job_key='gnf5_writer_job_'.md5($cat_id.'|'.wp_json_encode(GNF5_Research::writer_facts($research)).'|'.wp_json_encode(self::custom_context($cat_id)));
+        $job_key='gnf5_writer_job_'.md5('original610|'.$ignore_post.'|'.$cat_id.'|'.wp_json_encode(GNF5_Research::writer_facts($research)).'|'.wp_json_encode(self::custom_context($cat_id)));
         $job=get_transient($job_key);$job=is_array($job)?$job:array();
-        $previous=array();$limit=(int)GNF5_Utils::settings()['originality_retries'];
+        $previous=array();$limit=(int)GNF5_Utils::settings()['originality_retries'];$title_attempts=0;$titles=array();
         for($attempt=0;$attempt<=$limit;$attempt++){
             $plan=(isset($job['attempt'],$job['plan']) && $job['attempt']===$attempt)?$job['plan']:self::plan($research,$cat_id,$previous);if(is_wp_error($plan))return $plan;
             if(($job['attempt']??-1)!==$attempt)$job=array('attempt'=>$attempt,'plan'=>$plan);
             set_transient($job_key,$job,6*HOUR_IN_SECONDS);
+            if($title_attempts<5){
+                GNF5_Titles::release();
+                $titles=GNF5_Titles::generate($research,$plan,array(),$ignore_post,5-$title_attempts);
+                if(is_wp_error($titles))return $titles;
+                $title_attempts+=(int)$titles['title_attempts'];
+            }
             $prompt="TASK: WRITE_ORIGINAL_ARTICLE\nWrite new prose from the FACT_SHEET and independent PLAN only. Preferred length 1000–1200 words when the evidence supports it; write a shorter useful article when it does not. Do not pad, invent background or force sentiment, power words, dates, keyword density, tables, lists or FAQ. Title is the only H1; body uses H2/H3 where helpful. Do not emit links or image HTML. Direct quotes may use only fact-sheet exact quote text with attribution. Headlines and descriptions must be accurate and natural. Return JSON {title,seo_title,focus_keyword,slug,meta_description,excerpt,content_html,tags:[],image_prompts:[],image_alts:[],short_reason}. Image prompts (only if requested) describe two distinct conceptual editorial illustrations, never pretend to show a real unobserved event. Focus keyword and meta description should reflect the article naturally.\nFACT_SHEET:\n".wp_json_encode(GNF5_Research::writer_facts($research))."\nPLAN:\n".wp_json_encode($plan)."\nIMAGES_REQUESTED: ".(GNF5_Utils::images_enabled($cat_id)?'true':'false; return empty image arrays')."\n".self::custom_prompt_block($cat_id);
-            $raw=isset($job['article'])?$job['article']:self::gemini_json($prompt.self::seo_instruction().self::text_repair_instruction());if(is_wp_error($raw))return $raw;
+            $raw=isset($job['article'])?$job['article']:self::gemini_json($prompt."\nINDEPENDENT_HEADLINES:\n".wp_json_encode(array_intersect_key($titles,array_flip(array('title','seo_title')))).self::seo_instruction().self::text_repair_instruction());if(is_wp_error($raw))return $raw;
+            $raw['title']=$titles['title'];$raw['seo_title']=$titles['seo_title'];
             $job['article']=$raw;set_transient($job_key,$job,6*HOUR_IN_SECONDS);
             $article=GNF5_SEO::sanitize_article_data($raw);
             if(!$article['title'] || GNF5_Utils::word_count($article['content_html'])<80)return new WP_Error('empty_article','Generation did not produce a usable article; no empty Draft was saved.');
             $article['short_reason']=sanitize_text_field($raw['short_reason']??'');
             $article['plan']=$plan;
-            $report=GNF5_Quality::evaluate($article,$research,true);
+            $article['title_attempts']=$title_attempts;
+            $report=GNF5_Quality::evaluate($article,$research,true,$ignore_post);
             $report['generation_attempts']=$attempt+1;
             $article['quality']=$report;
-            if(($report['originality']['status']??'UNKNOWN')!=='FAIL'){delete_transient($job_key);return $article;}
+            if(($report['originality']['status']??'UNKNOWN')!=='FAIL' && ($report['metadata_originality']['status']??'UNKNOWN')!=='FAIL'){delete_transient($job_key);return $article;}
             $job=array();delete_transient($job_key);
             $previous=$plan; // Deliberately discard failed body; never feed it into regeneration.
             GNF5_Utils::log('Originality comparison failed; discarding body and planning a new article.','originality',$cat_id);

@@ -1,7 +1,7 @@
 <?php
 define('DOING_AJAX',true);
 $_SERVER['HTTP_HOST']='globiqnews.localhost:8097';$_SERVER['REQUEST_URI']='/';
-require_once __DIR__.'/bootstrap600.php';
+require __DIR__.'/wp-test/wordpress/wp-load.php';
 $checks=0;$created=array();$backup=get_option(GNF5_OPTION);$logs=get_option(GNF5_LOG_OPTION,array());$migration=get_option('gnf5_migration_version');$cron_backup=get_option('cron');$queue_backup=get_option(GNF5_BULK_RECOVERY_OPTION,array());
 function secure6($ok,$label){global $checks;if(!$ok)throw new RuntimeException('FAIL: '.$label);echo 'PASS: '.$label."\n";$checks++;}
 class StopAjax6 extends RuntimeException {}
@@ -20,6 +20,9 @@ try{
     $normal=wp_insert_post(array('post_status'=>'draft','post_title'=>'Ordinary local post'));$created[]=$normal;
     $r=ajax6(array_merge($base,array('post_id'=>$normal)));secure6(($r['data']['success']??true)===false,'ordinary WordPress post excluded from plugin actions');
     $r=ajax6(array_merge($base,array('task'=>'regenerate')));secure6(($r['data']['success']??true)===false && strpos($r['data']['data']['message'],'Confirm')!==false,'text regeneration requires explicit confirmation');
+    $r=ajax6(array_merge($base,array('task'=>'regenerate_title')));secure6(($r['data']['success']??true)===false && strpos($r['data']['data']['message'],'Confirm')!==false,'title-only regeneration requires explicit confirmation');
+    $r=ajax6(array_merge($base,array('task'=>'recheck_title')),0);secure6(($r['data']['success']??true)===false,'anonymous user cannot recheck title');
+    $r=ajax6(array_merge($base,array('task'=>'regenerate_title','confirmed'=>'yes','nonce'=>'invalid')));secure6($r['stop']==='-1','confirmed title regeneration still requires valid nonce');
     $r=ajax6(array_merge($base,array('task'=>'save_alt','attachment_id'=>999999)));secure6(($r['data']['success']??true)===false,'unrelated attachment ALT cannot be changed');
     $r=ajax6($base);secure6(($r['data']['success']??false)===true && get_post_status($id)==='draft','permitted image diagnostic works and stays Draft');
     secure6(!GNF5_Utils::is_locked(0),'action releases its worker lock');

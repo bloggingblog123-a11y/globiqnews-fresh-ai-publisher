@@ -656,9 +656,9 @@ class GNF5_SEO {
         $add('length',$words>=600,'Article has '.$words.' words. Aim for at least 600, preferably 1000–1200, only with supported useful explanations. If evidence cannot support expansion, provide short_reason; never pad or invent facts.');
         $add('density',$density>=1 && $density<=1.5,'Focus-keyword density is '.round($density,2).'%. Aim around 1–1.5% through natural references, never repetitive filler.');
         $add('url_length',strlen($d['slug']??'')<=75,'Keep the URL slug concise (75 characters or fewer).');
-        $add('sentiment',self::has_sentiment_word($title),'Use a positive or negative title word only if the verified facts justify it; otherwise retain a neutral headline.');
-        $add('power_word',self::has_power_word($title),'Use an accurate descriptive power word only when supported; do not exaggerate.');
-        $add('title_number',self::has_number($title),'Use a verified number or a truthful list count only when useful; never invent a date or number.');
+        $add('sentiment',self::has_sentiment_word($title),'Optional: use a positive or negative title word only if verified facts justify it; neutral headlines are acceptable.',false);
+        $add('power_word',self::has_power_word($title),'Optional: use an accurate descriptive power word only when supported; do not exaggerate.',false);
+        $add('title_number',self::has_number($title),'Optional: use a verified number or truthful list count only when useful; never invent a date or number.',false);
         preg_match_all('/<p\b[^>]*>(.*?)<\/p>/is',$html,$pars);$long=false;foreach($pars[1] as $p)if(GNF5_Utils::word_count($p)>120)$long=true;
         $add('paragraphs',!$long,'Break long paragraphs into shorter readable paragraphs.');
         return $checks;
@@ -676,7 +676,7 @@ class GNF5_SEO {
         if(($before['focus_keyword']??'')!==($after['focus_keyword']??''))return false;
         $old=self::text_checks($before);$new=self::text_checks($after);$improved=false;
         foreach($old as $key=>$check){
-            if($check['status']==='PASS' && $new[$key]['status']!=='PASS')return false;
+            if($check['repair'] && $check['status']==='PASS' && $new[$key]['status']!=='PASS')return false;
             if($check['status']!=='PASS' && $new[$key]['status']==='PASS')$improved=true;
         }
         if($improved)return true;

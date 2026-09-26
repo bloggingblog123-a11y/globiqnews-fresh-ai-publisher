@@ -25,6 +25,7 @@ $mock=function($pre,$args,$url)use(&$requests,&$prompts,&$mode,&$serial,&$case){
             }
             $out=array('facts'=>$facts,'conflicts'=>array(),'uncertainties'=>array('No commercial release date.'),'primary_sources'=>array());
         }elseif(strpos($p,'TASK: PLAN_ORIGINAL_ARTICLE')!==false){$out=array('angle'=>'Explain the difference between research scope and commercial readiness.','outline'=>array(array('heading'=>'The scope of the investigation','fact_ids'=>array('F1','F2')),array('heading'=>'What readers can watch for','fact_ids'=>array('F5'))),'added_value_plan'=>array(array('kind'=>'explanation','description'=>'Explain evidence limits','fact_ids'=>array('F1','F5'))));}
+        elseif(strpos($p,'TASK: ORIGINAL_TITLE')!==false){preg_match('/"subject":"([^"\\\\]+)"/',$p,$entity);$a=article6($entity[1]??$case);$out=array('title'=>$a['title'],'seo_title'=>$a['seo_title']);}
         elseif(strpos($p,'TASK: WRITE_ORIGINAL_ARTICLE')!==false || strpos($p,'TASK: OPTIMIZE_DRAFT_SEO')!==false){
             preg_match('/"subject":"([^"\\\\]+)"/',$p,$entity);$out=article6($entity[1]??$case);
             if($mode==='copy')$out['content_html']='<p>'.str_repeat(wp_strip_all_tags(source6($entity[1]??$case)).' ',2).'</p>';
