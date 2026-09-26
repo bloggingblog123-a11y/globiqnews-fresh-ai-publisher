@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.0.5
+# GlobiqNews Fresh AI Publisher — 6.0.6
+
+6.0.6 improves non-image SEO repair for opening keyword placement, evidence-supported length and factual title numbers, without regressing passing checks. Images and Draft-only behavior are unchanged. See [validation](TEST-REPORT-6.0.6.md).
 
 6.0.5 protects saved settings from older category/full-page forms, verifies committed category values, rejects incomplete saves and shows category-local feedback. Reload the settings page after updating. See [persistence findings and tests](TEST-REPORT-6.0.5.md).
 

@@ -13,7 +13,7 @@ $seoMock=function($pre,$args,$url)use(&$seoCalls,&$repairMode,&$lastPrompt,&$rac
             $current=json_decode(explode("\nGENUINE_SEO_FEEDBACK:\n",explode("\nCURRENT_ARTICLE:\n",$p,2)[1],2)[0],true);
             $out=$current;
             if($repairMode!=='same'){
-                $out['seo_title']='Solstice laboratory: key questions and evidence';
+                $out['seo_title']='Solstice laboratory: research review and key questions';
                 $out['meta_description']='Solstice laboratory research scope, evidence and the questions that remain open.';
                 $out['slug']='solstice-laboratory';
                 $out['content_html']=str_replace('The scope of the investigation','Solstice laboratory investigation',$out['content_html']);

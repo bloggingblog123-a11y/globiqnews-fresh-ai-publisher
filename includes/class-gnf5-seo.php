@@ -641,6 +641,8 @@ class GNF5_SEO {
         $kw=trim(explode(',',(string)($d['focus_keyword']??''))[0]);$title=$d['seo_title']??$d['title']??'';
         $words=GNF5_Utils::word_count($html);$density=self::keyword_density($html,$kw);
         $start=implode(' ',array_slice(preg_split('/\s+/u',$plain),0,max(1,(int)ceil($words*0.1))));
+        // A keyword in a heading/TOC alone is not an optimized introduction.
+        $opening=preg_match('/<p\b[^>]*>(.*?)<\/p>/is',$html,$match)?wp_strip_all_tags($match[1]):$start;
         $checks=array();
         $add=function($key,$ok,$message,$repair=true)use(&$checks){$checks[$key]=array('status'=>$ok?'PASS':'REVIEW','message'=>$message,'repair'=>$repair);};
         $add('keyword', $kw!=='','Choose a specific focus keyword that accurately describes the verified topic.');
@@ -648,7 +650,7 @@ class GNF5_SEO {
         $add('title_start',$kw!=='' && stripos(trim($title),$kw)===0,'Start the SEO title with the focus keyword when it reads naturally.');
         $add('description',self::contains_exact_phrase($d['meta_description']??'',$kw),'Include the focus keyword naturally in the meta description.');
         $add('slug',self::slug_contains_focus_keyword($d['slug']??'',$kw),'Include the focus keyword in the URL slug without making it long.');
-        $add('introduction',self::contains_exact_phrase($start,$kw),'Use the focus keyword within the first 10% of the article.');
+        $add('introduction',self::contains_exact_phrase($start,$kw) && self::contains_exact_phrase($opening,$kw),'Use the unchanged focus keyword naturally in the first sentence or opening paragraph AND within the first 10% of the article. A heading alone does not satisfy this check.');
         $add('body_keyword',self::contains_exact_phrase($plain,$kw),'Use the focus keyword naturally in the article body.');
         $add('heading',self::heading_contains_exact_phrase($html,$kw),'Use the focus keyword in a relevant H2 or H3.');
         $add('length',$words>=600,'Article has '.$words.' words. Aim for at least 600, preferably 1000–1200, only with supported useful explanations. If evidence cannot support expansion, provide short_reason; never pad or invent facts.');
@@ -663,8 +665,26 @@ class GNF5_SEO {
     }
 
     public static function text_feedback($d) {
-        $out=array();foreach(self::text_checks($d) as $check)if($check['status']!=='PASS' && $check['repair'])$out[]=$check['message'];
+        $checks=self::text_checks($d);
+        $ordered=array_merge(array_flip(array('introduction','length','title_number')),$checks);
+        $out=array();foreach($ordered as $check)if($check['status']!=='PASS' && $check['repair'])$out[]=$check['message'];
         return $out;
+    }
+
+    /** Accept real progress without trading away already-passing text checks. */
+    public static function text_repair_progress($before,$after) {
+        if(($before['focus_keyword']??'')!==($after['focus_keyword']??''))return false;
+        $old=self::text_checks($before);$new=self::text_checks($after);$improved=false;
+        foreach($old as $key=>$check){
+            if($check['status']==='PASS' && $new[$key]['status']!=='PASS')return false;
+            if($check['status']!=='PASS' && $new[$key]['status']==='PASS')$improved=true;
+        }
+        if($improved)return true;
+        // Crossing 600 can take more than one bounded repair. Factual/originality
+        // review still runs before any longer candidate is saved.
+        $was=GNF5_Utils::word_count($before['content_html']??'');
+        $now=GNF5_Utils::word_count($after['content_html']??'');
+        return $was<600 && $now>=$was+60;
     }
 
     public static function checklist($post_id) {
