@@ -110,9 +110,16 @@ class GNF5_Titles {
         $last=array();$reasons=array();
         for($attempt=1;$attempt<=max(1,min(5,$limit));$attempt++){
             $prompt="TASK: ORIGINAL_TITLE\nCreate an independent factual headline and SEO title from the fact sheet, article angle, outline and reader intent. Never rewrite or synonymize another headline. Try a positive/negative descriptor and recognized power word if verified facts justify them; never invent sentiment or unsupported benefits/comparisons. Prefer a useful factual number from the fact sheet in the SEO title when supported; never invent a number or add an arbitrary year. Both titles must describe the actual article. Return JSON {title:string,seo_title:string}. Rejection reasons contain no source wording. Choose a new useful framing when retrying.\nFACT_SHEET:\n".wp_json_encode(GNF5_Research::writer_facts($research))."\nPLAN:\n".wp_json_encode($plan)."\nFINAL_ARTICLE_IF_AVAILABLE:\n".wp_json_encode(array_intersect_key($article,array_flip(array('content_html','focus_keyword'))))."\nREJECTION_REASONS:\n".wp_json_encode($reasons)."\n".GNF5_SEO::title_word_guidance();
+            $keyword=trim((string)($article['focus_keyword']??''));
+            if($keyword!=='')$prompt.="\nREQUIRED SEO TITLE: Begin with the exact focus keyword ".wp_json_encode($keyword).". Preserve its spelling and word order. Keep the title factual and readable; do not replace the keyword with a synonym. The visible headline may use different natural wording.";
             $raw=GNF5_Writer::gemini_json($prompt);if(is_wp_error($raw))return $raw;
             $last=array('title'=>sanitize_text_field($raw['title']??''),'seo_title'=>sanitize_text_field($raw['seo_title']??$raw['title']??''),'title_attempts'=>$attempt);
             if(!$last['title'] || !$last['seo_title']){$reasons=array('No usable independent headline returned.');continue;}
+            $keyword=trim((string)($article['focus_keyword']??''));
+            if($keyword!=='' && !GNF5_SEO::begins_with_exact_phrase($last['seo_title'],$keyword)){
+                $reasons=array('Start the SEO title with the exact focus keyword: '.$keyword.'. Keep the same factual subject and natural wording.');
+                continue;
+            }
             $report=self::check($last,$research,$ignore_post);$last['title_check']=$report;
             if($report['status']==='PASS' && self::claim($last))return $last;
             $reasons=array('Headline or SEO title is too close to collected/site/job headlines, or comparisons were incomplete. Generate a new framing from the facts and plan.');

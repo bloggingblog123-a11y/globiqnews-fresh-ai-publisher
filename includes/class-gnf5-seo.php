@@ -599,6 +599,19 @@ class GNF5_SEO {
         }
         $result=$html.($related?'<h2>Related reading</h2><ul>'.implode('',$related).'</ul>':'');
         $audit=self::anchor_audit($result,$post_id);
+        // A relevant category archive is useful navigation when no individual
+        // published story matches. Do not invent a related article or link a draft.
+        if(!$audit['valid_internal'] && $cat_id>0){
+            $public=get_posts(array('post_type'=>'post','post_status'=>'publish','numberposts'=>1,
+                'post__not_in'=>array($post_id),'has_password'=>false,'category'=>$cat_id));
+            $category=get_term($cat_id,'category');$archive=get_category_link($cat_id);
+            if($public && $category && !is_wp_error($category) && $archive && !is_wp_error($archive)){
+                $result.='<p>More in <a href="'.esc_url($archive).'">'.esc_html($category->name).'</a>.</p>';
+                $audit=self::anchor_audit($result,$post_id);
+                update_post_meta($post_id,'_gnf5_internal_link_note','Linked the public '.sanitize_text_field($category->name).' category archive; no sufficiently related individual article was found.');
+                return $result;
+            }
+        }
         update_post_meta($post_id,'_gnf5_internal_link_note',$audit['valid_internal']?'Relevant published internal links: '.$audit['valid_internal'].'.':'No relevant public published post was found in the bounded title/keyword/content search. Draft, private and unrelated posts are not linked.');
         return $result;
     }
@@ -700,7 +713,7 @@ class GNF5_SEO {
         $add=function($key,$ok,$message,$repair=true)use(&$checks){$checks[$key]=array('status'=>$ok?'PASS':'REVIEW','message'=>$message,'repair'=>$repair);};
         $add('keyword', $kw!=='','Choose a specific focus keyword that accurately describes the verified topic.');
         $add('title_keyword',self::contains_exact_phrase($title,$kw),'Use the focus keyword naturally in the SEO title.');
-        $add('title_start',$kw!=='' && stripos(trim($title),$kw)===0,'Start the SEO title with the focus keyword when it reads naturally.');
+        $add('title_start',self::begins_with_exact_phrase($title,$kw),'Start the SEO title with the exact focus keyword.');
         $add('description',self::contains_exact_phrase($d['meta_description']??'',$kw),'Include the focus keyword naturally in the meta description.');
         $add('slug',self::slug_contains_focus_keyword($d['slug']??'',$kw),'Include the focus keyword in the URL slug without making it long.');
         $add('introduction',self::contains_exact_phrase($start,$kw) && self::contains_exact_phrase($opening,$kw),'Use the unchanged focus keyword naturally in the first sentence or opening paragraph AND within the first 10% of the article. A heading alone does not satisfy this check.');
@@ -719,7 +732,7 @@ class GNF5_SEO {
 
     public static function text_feedback($d) {
         $checks=self::text_checks($d);
-        $ordered=array_merge(array_flip(array('introduction','length','title_number')),$checks);
+        $ordered=array_merge(array_flip(array('title_keyword','title_start','description','slug','introduction','heading','length','density','title_number')),$checks);
         $out=array();foreach($ordered as $check)if($check['status']!=='PASS' && $check['repair'])$out[]=$check['message'];
         return $out;
     }
@@ -835,6 +848,20 @@ class GNF5_SEO {
         return false;
     }
 
+    /** Adopt only unchanged metadata matching this generated Draft's checkpoint. */
+    public static function prepare_rank_math_repair($post_id,$article){
+        if(!GNF5_Publish::can_rewrite($post_id))return new WP_Error('manual_edit','Draft has changed; SEO metadata was preserved.');
+        $written=(array)get_post_meta($post_id,'_gnf5_rankmath_written',true);$adopt=array();
+        foreach(array('rank_math_title'=>'seo_title','rank_math_description'=>'meta_description','rank_math_focus_keyword'=>'focus_keyword') as $key=>$field){
+            $current=(string)get_post_meta($post_id,$key,true);
+            if($current==='' || (isset($written[$key]) && $current===(string)$written[$key]))continue;
+            if($current===(string)($article[$field]??''))$adopt[$key]=$current;
+            else return new WP_Error('metadata_conflict','Saved '.$key.' differs from the generated checkpoint. Review that field in the editor; text and metadata were preserved.');
+        }
+        if($adopt)update_post_meta($post_id,'_gnf5_rankmath_written',array_merge($written,$adopt));
+        return true;
+    }
+
     public static function save_rank_math($post_id,$d){
         if(empty(GNF5_Utils::settings()['rankmath_enabled']))return;
         $d=self::normalize_metadata($d);
@@ -897,7 +924,10 @@ class GNF5_SEO {
                 if(!$valid){
                     foreach((array)wp_get_post_categories($post_id) as $cid){
                         $cat_url=get_category_link(absint($cid));
-                        if(!is_wp_error($cat_url) && $cat_url && GNF5_Utils::same_resource_url($href,$cat_url)){$valid=true;break;}
+                        // Both URLs are local and the target comes from WordPress.
+                        // The external-source validator intentionally rejects local
+                        // staging hosts, so it cannot be used for this comparison.
+                        if(!is_wp_error($cat_url) && $cat_url && untrailingslashit($href)===untrailingslashit(html_entity_decode($cat_url,ENT_QUOTES,'UTF-8'))){$valid=true;break;}
                     }
                 }
                 if($valid)$out['valid_internal']++;

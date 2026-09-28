@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.1.2
+# GlobiqNews Fresh AI Publisher — 6.1.3
+
+6.1.3 fixes final-title keyword alignment, retries an unchanged SEO response within the existing cap, checks saved metadata and adds relevant category navigation when no individual article matches. Images and external links are unchanged. See [validation and limits](TEST-REPORT-6.1.3.md).
 
 6.1.2 addresses title-word repair, relevant internal links with different wording, short-body regression and repair-result diagnostics. Existing drafts require Improve SEO & Links; images and Draft-only behavior are unchanged. See [findings and test limits](TEST-REPORT-6.1.2.md).
 

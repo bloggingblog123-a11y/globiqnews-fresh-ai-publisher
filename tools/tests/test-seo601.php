@@ -87,7 +87,7 @@ try{
     $repairMode='keyword';$repaired=GNF5_Writer::repair_for_validation($article,$research,$before,$cat);
     v6(is_wp_error($repaired),'AI cannot switch the focus keyword to an unrelated topic during repair');
     $nochange=draft601($cat,$article,$research);$repairMode='same';$beforeCalls=$seoCalls;GNF5_Runner::optimize_text($nochange);
-    v6($seoCalls===$beforeCalls+1 && get_post_meta($nochange,'_gnf5_seo_repair_attempts',true)==1,'unchanged response stops immediately instead of wasting three rewrites');
+    v6($seoCalls===$beforeCalls+3 && get_post_meta($nochange,'_gnf5_seo_repair_attempts',true)==3,'unchanged response without an evidence limitation uses only the remaining bounded attempts');
     update_post_meta($nochange,'_gnf5_seo_repair_attempts',3);$beforeCalls=$seoCalls;GNF5_Runner::optimize_text($nochange);
     v6($seoCalls===$beforeCalls,'three-attempt limit survives repeated button/worker runs');
     $bad=draft601($cat,$article,$research);$original=get_post_field('post_content',$bad);$repairMode='bad';$mode='partial_review';GNF5_Runner::repair_scored_post($bad);$mode='normal';
