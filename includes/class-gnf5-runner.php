@@ -385,7 +385,7 @@ class GNF5_Runner {
 
     /** Works without Node/remote scoring; shares the three-attempt limit with real-score repair. */
     public static function optimize_text($post_id) {
-        if(empty(GNF5_Utils::settings()['rankmath_enabled']))return;
+        if(empty(GNF5_Utils::settings()['rankmath_enabled'])){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO optimization is OFF in plugin settings.');return;}
         for($i=0;$i<3;$i++)if(!self::repair_scored_post($post_id,true))break;
     }
 
@@ -414,11 +414,26 @@ class GNF5_Runner {
         return true;
     }
 
+    /** Report saved results, including failures, instead of implying all SEO checks passed. */
+    public static function seo_result_message($post_id){
+        $checks=GNF5_SEO::checklist($post_id);$parts=array();
+        $article=(array)get_post_meta($post_id,'_gnf5_article_data',true);
+        $words=GNF5_Utils::word_count($article['content_html']??get_post_field('post_content',$post_id));
+        $parts[]='Saved article body: '.$words.' words'.($words<600?' (below 600).':'.');
+        foreach(array('sentiment'=>'Title sentiment','power_word'=>'Title power word','internal_links'=>'Internal links') as $key=>$label)$parts[]=$label.': '.$checks[$key]['status'].'.';
+        $parts[]=get_post_meta($post_id,'_gnf5_seo_repair_note',true);
+        if($checks['internal_links']['status']!=='PASS')$parts[]=$checks['internal_links']['message'];
+        foreach((array)get_post_meta($post_id,'_gnf5_seo_unresolved',true) as $reason)$parts[]=$reason;
+        return implode(' ',array_filter($parts));
+    }
+
     /** One bounded, independently quality-checked improvement of an unchanged generated article. */
     public static function repair_scored_post($post_id,$local=false) {
         if(!GNF5_Publish::can_rewrite($post_id))return false;
         $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
-        if(is_wp_error($research) || !is_array($article) || empty(GNF5_Utils::settings()['gemini_api_key']))return false;
+        if(is_wp_error($research)){update_post_meta($post_id,'_gnf5_seo_repair_note','Research unavailable: '.GNF5_Utils::redact($research->get_error_message()));return false;}
+        if(!is_array($article) || empty($article['content_html'])){update_post_meta($post_id,'_gnf5_seo_repair_note','Generated article checkpoint is missing.');return false;}
+        if(empty(GNF5_Utils::settings()['gemini_api_key'])){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO text improvement needs a saved Gemini API key.');return false;}
         $quality=$article['quality']??array();
         if(($quality['version']??0)<2){
             $before_review=self::edit_token($post_id);
@@ -429,12 +444,12 @@ class GNF5_Runner {
         }
         if(!GNF5_Quality::permits_seo($quality)){
             GNF5_Quality::store($post_id,$quality);
-            update_post_meta($post_id,'_gnf5_seo_repair_note','Originality/title/factual checks require review before text optimization.');return false;
+            update_post_meta($post_id,'_gnf5_seo_repair_note','Originality/title/factual checks require review before text optimization. '.implode(' ',GNF5_Quality::review_reasons($quality)));return false;
         }
         // One fresh bounded budget for this repair policy, including older drafts.
         // Human-edited drafts are rejected above before any state is changed.
-        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='611'){
-            update_post_meta($post_id,'_gnf5_text_repair_policy','611');
+        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='612'){
+            update_post_meta($post_id,'_gnf5_text_repair_policy','612');
             delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
             delete_post_meta($post_id,'_gnf5_seo_repair_stopped');
         }
@@ -446,7 +461,7 @@ class GNF5_Runner {
         if(!GNF5_SEO::focus_keyword_is_unique($article['focus_keyword']??'',$post_id))$errors[]='This focus keyword is already used on another post. Refine it to a meaningful unused article-specific phrase and update all placements together.';
         if(!$local)foreach((array)get_post_meta($post_id,'_gnf5_seo_tests',true) as $name=>$test){
             // Images, paid Content AI and link placement are not tasks for the text writer.
-            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow','titleHasSentiment','titleSentiment','titleHasPowerWords'),true))continue;
+            if(in_array($name,array('hasContentAI','keywordInImageAlt','contentHasAssets','linksHasInternal','linksHasExternals','linksNotAllExternals','linksHasDofollow'),true))continue;
             if(is_array($test) && ($test['score']??0)<($test['maximum']??0))$errors[]=wp_strip_all_tags($test['message']??$name);
         }
         if(!$errors)return false;
@@ -463,7 +478,7 @@ class GNF5_Runner {
         $report=GNF5_Quality::evaluate($repaired,$research,true,$post_id);
         if(!GNF5_Quality::permits_seo($report)){
             update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
-            update_post_meta($post_id,'_gnf5_seo_repair_note','Suggested SEO changes failed factual/originality review. Original Draft retained.');
+            update_post_meta($post_id,'_gnf5_seo_repair_note','Suggested SEO changes failed factual/originality review. Original Draft retained. '.implode(' ',GNF5_Quality::review_reasons($report)));
             GNF5_Utils::log('SEO optimization '.$attempt.' rejected: quality evidence insufficient. Original Draft retained.','seo_warning',$cat_id);return false;
         }
         if(!hash_equals($token,self::edit_token($post_id)) || !GNF5_Publish::can_rewrite($post_id))return false;

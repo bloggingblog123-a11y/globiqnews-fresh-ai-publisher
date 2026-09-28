@@ -1,4 +1,6 @@
-# GlobiqNews Fresh AI Publisher — 6.1.1
+# GlobiqNews Fresh AI Publisher — 6.1.2
+
+6.1.2 addresses title-word repair, relevant internal links with different wording, short-body regression and repair-result diagnostics. Existing drafts require Improve SEO & Links; images and Draft-only behavior are unchanged. See [findings and test limits](TEST-REPORT-6.1.2.md).
 
 6.1.1 improves measured keyword density/length repair, reused-keyword refinement, factual title numbers and relevant internal links. Explicit repair refreshes expired comparisons; old posts are not rewritten on installation. Images and Draft-only behavior are unchanged. See [findings and actual Rank Math validation](TEST-REPORT-6.1.1.md).
 

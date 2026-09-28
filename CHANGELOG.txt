@@ -1,3 +1,6 @@
+6.1.2 — 2026-09-28
+Conditional factual title-word optimization; same-subject internal link matching with nonverbatim wording; short-body regression guard; measured remaining targets and repair blockers. Images unchanged, Draft-only preserved.
+
 6.1.1 — 2026-09-26
 Measured 1.5% density/length targets; partial progress without stuffing; factual title-number repair; safe refinement of reused keywords; full duplicate lookup; relevant target body-based internal links; explicit expired-comparison refresh; compact HTML counts; unresolved reasons. Images unchanged, Draft-only preserved.
 
