@@ -165,7 +165,7 @@ class GNF5_Writer {
         $prompt="TASK: OPTIMIZE_DRAFT_SEO\nImprove only natural SEO/readability issues, retaining the same facts, angle and focus keyword. Accuracy outranks test scores. Never force power words, an invented year, keyword density, unnecessary length or missing images. No links or image HTML. Return the same article JSON fields.\nFACT_SHEET:\n".wp_json_encode(GNF5_Research::writer_facts($research))."\nCURRENT_ARTICLE:\n".wp_json_encode(array_intersect_key($article,array_flip(array('title','seo_title','focus_keyword','slug','meta_description','excerpt','content_html','tags'))))."\nGENUINE_SEO_FEEDBACK:\n".wp_json_encode($errors)."\n".self::custom_prompt_block($cat_id);
         $targets=GNF5_SEO::repair_targets($article,$post_id);
         $keyword_rule=$targets['keyword_reused']?'The current focus keyword is already used. You may extend that exact phrase with a meaningful qualifier already present in this article, keeping the same subject and intent. Choose an unused phrase of at most eight words. Update SEO title, description, slug, opening, heading and body consistently; never change the subject just for uniqueness.':'The current focus keyword is unique. Preserve it exactly.';
-        $raw=self::gemini_json($prompt.self::seo_instruction().self::text_repair_instruction()."\nMEASURED_REPAIR_TARGETS:\n".wp_json_encode($targets)."\nKEYWORD_RULE:\n".$keyword_rule."\nALREADY_USED_FOCUS_KEYWORDS:\n".wp_json_encode(GNF5_SEO::recent_focus_keywords(200))."\nReturn seo_unresolved as an array explaining each target that cannot be met from the evidence. It is not a score or a substitute for factual checking.");if(is_wp_error($raw))return $raw;
+        $raw=self::gemini_json($prompt.self::seo_instruction().self::text_repair_instruction().GNF5_SEO::title_word_guidance()."\nMEASURED_REPAIR_TARGETS:\n".wp_json_encode($targets)."\nKEYWORD_RULE:\n".$keyword_rule."\nALREADY_USED_FOCUS_KEYWORDS:\n".wp_json_encode(GNF5_SEO::recent_focus_keywords(200))."\nReturn seo_unresolved as an array explaining each target that cannot be met from the evidence. It is not a score or a substitute for factual checking.");if(is_wp_error($raw))return $raw;
         $repaired=GNF5_SEO::sanitize_article_data(array_merge($article,$raw));
         // Repair cannot silently change the keyword used by the real analyzer.
         if(($repaired['focus_keyword']??'')!==$article['focus_keyword'] && !GNF5_SEO::valid_keyword_refinement($article,$repaired,$post_id))return new WP_Error('keyword_change','Suggested focus keyword did not preserve the topic, uniqueness or all required placements. Original Draft retained.');
@@ -173,6 +173,8 @@ class GNF5_Writer {
         $repaired['plan']=$article['plan']??array();$repaired['short_reason']=sanitize_text_field($raw['short_reason']??$article['short_reason']??'');
         $repaired['image_prompts']=$article['image_prompts'];$repaired['image_alts']=$article['image_alts'];
         $repaired['seo_unresolved']=array_map('sanitize_text_field',array_slice(is_array($raw['seo_unresolved']??null)?$raw['seo_unresolved']:array(),0,10));
+        if(GNF5_Utils::word_count($repaired['content_html'])<600 && $repaired['short_reason']!=='')$repaired['seo_unresolved'][]='Length: '.$repaired['short_reason'];
+        $repaired['seo_unresolved']=array_values(array_unique($repaired['seo_unresolved']));
         return $repaired;
     }
 }

@@ -176,6 +176,12 @@ class GNF5_SEO {
         ));
     }
 
+    /** Vocabulary examples only; descriptors must be justified by the evidence. */
+    public static function title_word_guidance(){
+        $power=array_values(array_intersect(array('useful','clear','detailed','effective','successful','strong','weak','dangerous','critical'),self::rank_math_power_words()));
+        return 'Try an accurate positive/negative descriptor and a recognized power word in the SEO title when the evidence supports them. Sentiment examples: successful, promising, better, weak, dangerous. Recognized power-word examples: '.implode(', ',$power).'. These are vocabulary examples, not facts about this story. Never describe a trial as successful before results exist or invent a benefit, danger or comparison. If neither is justified, retain a neutral title and explain the missing support in seo_unresolved.';
+    }
+
     private static function contains_any_word($text,$words){
         $text=' '.self::normalize_title($text).' ';
         foreach($words as $w){$needle=self::normalize_title($w);if($needle!==''&&strpos($text,' '.$needle.' ')!==false)return true;}
@@ -577,8 +583,11 @@ class GNF5_SEO {
             $shared=count(array_intersect($terms,self::link_terms($p->post_title.' '.$other)));
             $target_context=$p->post_title.' '.$other.' '.GNF5_Utils::safe_substr(wp_strip_all_tags($p->post_excerpt.' '.$p->post_content),0,4000);
             $exact=count(self::link_terms($base_keyword))>=2 && self::contains_exact_phrase($target_context,$base_keyword);
-            if(!$exact && $shared<2)continue;
-            $ranked[]=array('post'=>$p,'anchor'=>$other,'rank'=>$shared+($exact?4:0)+(has_category($cat_id,$p)?1:0));
+            // Match the same specific subject with reordered words or modifiers.
+            // All meaningful keyword terms must occur together in a short sentence.
+            $subject=self::nearby_subject_terms($target_context,$base_keyword);
+            if(!$exact && !$subject && $shared<2)continue;
+            $ranked[]=array('post'=>$p,'anchor'=>$other,'rank'=>$shared+($exact?4:($subject?2:0))+(has_category($cat_id,$p)?1:0));
         }
         usort($ranked,function($a,$b){return $b['rank']<=>$a['rank'];});$count=0;$related=array();
         foreach($ranked as $row){
@@ -592,6 +601,19 @@ class GNF5_SEO {
         $audit=self::anchor_audit($result,$post_id);
         update_post_meta($post_id,'_gnf5_internal_link_note',$audit['valid_internal']?'Relevant published internal links: '.$audit['valid_internal'].'.':'No relevant public published post was found in the bounded title/keyword/content search. Draft, private and unrelated posts are not linked.');
         return $result;
+    }
+
+    private static function nearby_subject_terms($text,$keyword){
+        $terms=self::link_terms($keyword);
+        if(count($terms)<2)return false;
+        foreach(preg_split('/[.!?\r\n]+/u',wp_strip_all_tags($text)) as $sentence){
+            $tokens=preg_split('/\s+/u',self::normalize_title($sentence));
+            foreach($tokens as $i=>$token){
+                if(!in_array($token,$terms,true))continue;
+                if(!array_diff($terms,array_slice($tokens,$i,40)))return true;
+            }
+        }
+        return false;
     }
 
     /** Only for generated article data, never run over human-edited WordPress content. */
@@ -687,8 +709,8 @@ class GNF5_SEO {
         $add('length',$words>=600,'Article has '.$words.' words. Aim for at least 600, preferably 1000–1200, only with supported useful explanations. If evidence cannot support expansion, provide short_reason; never pad or invent facts.');
         $add('density',$density>=1.3 && $density<=1.7,'Focus-keyword density is '.round($density,2).'%, with '.self::keyword_occurrences($html,$kw).' exact occurrences in '.$words.' words. Aim near 1.5% (about '.max(1,(int)round(max(650,$words)*0.015)).' natural occurrences at '.max(650,$words).' words); recalculate after expansion, never add repetitive filler.');
         $add('url_length',strlen($d['slug']??'')<=75,'Keep the URL slug concise (75 characters or fewer).');
-        $add('sentiment',self::has_sentiment_word($title),'Optional: use a positive or negative title word only if verified facts justify it; neutral headlines are acceptable.',false);
-        $add('power_word',self::has_power_word($title),'Optional: use an accurate descriptive power word only when supported; do not exaggerate.',false);
+        $add('sentiment',self::has_sentiment_word($title),'Try a positive or negative title word justified by verified facts. If unsupported, retain neutral wording and explain why in seo_unresolved.');
+        $add('power_word',self::has_power_word($title),'Try an accurate descriptive power word supported by the article. Do not exaggerate; explain any evidence limitation in seo_unresolved.');
         $add('title_number',self::has_number($title),'Include a useful number from verified facts, or an accurate count of distinct items actually discussed. If neither is supported, explain why in seo_unresolved; never invent a date, statistic or list.');
         preg_match_all('/<p\b[^>]*>(.*?)<\/p>/is',$html,$pars);$long=false;foreach($pars[1] as $p)if(GNF5_Utils::word_count($p)>120)$long=true;
         $add('paragraphs',!$long,'Break long paragraphs into shorter readable paragraphs.');
@@ -704,6 +726,11 @@ class GNF5_SEO {
 
     /** Accept real progress without trading away already-passing text checks. */
     public static function text_repair_progress($before,$after,$post_id=0) {
+        // A better title must not mask substantial loss from an already-short body.
+        // Allow small copy edits, such as making a heading two words shorter.
+        $was=GNF5_Utils::word_count($before['content_html']??'');
+        $now=GNF5_Utils::word_count($after['content_html']??'');
+        if($was<600 && $now<$was-max(10,(int)ceil($was*0.05)))return false;
         $refined=($before['focus_keyword']??'')!==($after['focus_keyword']??'');
         if($refined && !self::valid_keyword_refinement($before,$after,$post_id))return false;
         $old_density=self::keyword_density($before['content_html']??'',$before['focus_keyword']??'');

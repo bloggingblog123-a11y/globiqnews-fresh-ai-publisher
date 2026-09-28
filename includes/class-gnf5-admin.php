@@ -617,7 +617,7 @@ class GNF5_Admin {
             if($action==='regenerate'){$result=GNF5_Runner::regenerate($id);$message='Draft regeneration finished. Review before manually publishing.';}
             elseif($action==='regenerate_title'){$result=GNF5_Titles::regenerate_post($id);$message='Headline and SEO title updated after originality and factual checks. Body and images unchanged.';}
             elseif($action==='recheck_title'){$result=GNF5_Titles::recheck_post($id);$message='Title originality: '.(is_array($result)?$result['status']:'NOT CHECKED').'.';}
-            elseif($action==='improve_seo'){$result=GNF5_Runner::improve_seo($id);$message='Link and non-image SEO improvement finished. '.get_post_meta($id,'_gnf5_seo_repair_note',true).' Review the checklist and reopen the editor to see Rank Math’s actual score.';}
+            elseif($action==='improve_seo'){$result=GNF5_Runner::improve_seo($id);$message=GNF5_Runner::seo_result_message($id).' Reopen the editor for Rank Math’s actual score. Draft remains unpublished.';}
             elseif($action==='seo'){GNF5_RankMath::reset_retry($id);GNF5_RankMath::run($id);$message='Rank Math recheck finished. Score: '.(GNF5_Publish::score($id)??'NOT CHECKED').'. '.get_post_meta($id,'_gnf5_seo_error',true);}
             elseif($action==='quality'){
                 $research=GNF5_Research::load($id,true);
