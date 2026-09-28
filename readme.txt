@@ -1,7 +1,7 @@
 === GlobiqNews Fresh AI Publisher ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 6.1.2
+Stable tag: 6.1.3
 
 Topic discovery, evidence-backed research, original articles and optional images saved as Drafts for human review.
 
@@ -36,6 +36,10 @@ Enable plugin auto-updates in WordPress to receive future published code updates
 Published updates preserve saved settings and do not automatically publish articles.
 
 == Changelog ==
+= 6.1.3 =
+Keyword-aware final title order, bounded corrective retries, consistent legacy
+metadata, saved text checks and relevant public category navigation.
+
 = 6.1.2 =
 Evidence-supported title word repair, nonverbatim subject internal links,
 short-body regression protection and measured remaining-target diagnostics.

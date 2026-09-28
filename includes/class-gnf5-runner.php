@@ -386,7 +386,14 @@ class GNF5_Runner {
     /** Works without Node/remote scoring; shares the three-attempt limit with real-score repair. */
     public static function optimize_text($post_id) {
         if(empty(GNF5_Utils::settings()['rankmath_enabled'])){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO optimization is OFF in plugin settings.');return;}
-        for($i=0;$i<3;$i++)if(!self::repair_scored_post($post_id,true))break;
+        for($i=0;$i<3;$i++){
+            if(self::repair_scored_post($post_id,true))continue;
+            if(!get_post_meta($post_id,'_gnf5_seo_repair_retryable',true))break;
+        }
+        $checks=GNF5_SEO::checklist($post_id);$remaining=array();
+        foreach($checks as $key=>$check)if(!in_array($key,array('external_links','dofollow'),true) && $check['status']!=='PASS')$remaining[]=$key;
+        update_post_meta($post_id,'_gnf5_text_seo_remaining',$remaining);
+        update_post_meta($post_id,'_gnf5_text_seo_status',$remaining?'needs_review':'pass');
     }
 
     public static function improve_seo($post_id) {
@@ -420,7 +427,8 @@ class GNF5_Runner {
         $article=(array)get_post_meta($post_id,'_gnf5_article_data',true);
         $words=GNF5_Utils::word_count($article['content_html']??get_post_field('post_content',$post_id));
         $parts[]='Saved article body: '.$words.' words'.($words<600?' (below 600).':'.');
-        foreach(array('sentiment'=>'Title sentiment','power_word'=>'Title power word','internal_links'=>'Internal links') as $key=>$label)$parts[]=$label.': '.$checks[$key]['status'].'.';
+        foreach(array('title_keyword'=>'Keyword in SEO title','title_start'=>'Keyword at title start','description'=>'Keyword in description','slug'=>'Keyword in URL','introduction'=>'Keyword in opening','heading'=>'Keyword in heading','length'=>'Minimum length','density'=>'Keyword density','sentiment'=>'Title sentiment','power_word'=>'Title power word','title_number'=>'Title number','paragraphs'=>'Short paragraphs','internal_links'=>'Internal links') as $key=>$label)$parts[]=$label.': '.$checks[$key]['status'].'.';
+        $parts[]=$checks['density']['message'];
         $parts[]=get_post_meta($post_id,'_gnf5_seo_repair_note',true);
         if($checks['internal_links']['status']!=='PASS')$parts[]=$checks['internal_links']['message'];
         foreach((array)get_post_meta($post_id,'_gnf5_seo_unresolved',true) as $reason)$parts[]=$reason;
@@ -429,10 +437,13 @@ class GNF5_Runner {
 
     /** One bounded, independently quality-checked improvement of an unchanged generated article. */
     public static function repair_scored_post($post_id,$local=false) {
+        delete_post_meta($post_id,'_gnf5_seo_repair_retryable');
         if(!GNF5_Publish::can_rewrite($post_id))return false;
         $research=GNF5_Research::load($post_id);$article=get_post_meta($post_id,'_gnf5_article_data',true);
         if(is_wp_error($research)){update_post_meta($post_id,'_gnf5_seo_repair_note','Research unavailable: '.GNF5_Utils::redact($research->get_error_message()));return false;}
         if(!is_array($article) || empty($article['content_html'])){update_post_meta($post_id,'_gnf5_seo_repair_note','Generated article checkpoint is missing.');return false;}
+        $metadata=GNF5_SEO::prepare_rank_math_repair($post_id,$article);
+        if(is_wp_error($metadata)){update_post_meta($post_id,'_gnf5_seo_repair_note',$metadata->get_error_message());return false;}
         if(empty(GNF5_Utils::settings()['gemini_api_key'])){update_post_meta($post_id,'_gnf5_seo_repair_note','SEO text improvement needs a saved Gemini API key.');return false;}
         $quality=$article['quality']??array();
         if(($quality['version']??0)<2){
@@ -448,10 +459,11 @@ class GNF5_Runner {
         }
         // One fresh bounded budget for this repair policy, including older drafts.
         // Human-edited drafts are rejected above before any state is changed.
-        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='612'){
-            update_post_meta($post_id,'_gnf5_text_repair_policy','612');
+        if(get_post_meta($post_id,'_gnf5_text_repair_policy',true)!=='613'){
+            update_post_meta($post_id,'_gnf5_text_repair_policy','613');
             delete_post_meta($post_id,'_gnf5_seo_repair_attempts');
             delete_post_meta($post_id,'_gnf5_seo_repair_stopped');
+            delete_post_meta($post_id,'_gnf5_text_repair_feedback');
         }
         if((int)get_post_meta($post_id,'_gnf5_seo_repair_attempts',true)>=3){update_post_meta($post_id,'_gnf5_seo_repair_note','Three SEO optimization attempts used. Review remaining items manually; no further AI rewrite was requested.');return false;}
         $repair_key=hash('sha256',serialize($article));
@@ -472,7 +484,11 @@ class GNF5_Runner {
         update_post_meta($post_id,'_gnf5_seo_unresolved',$repaired['seo_unresolved']??array());
         $same=true;foreach(array('title','seo_title','focus_keyword','slug','meta_description','excerpt','content_html') as $key)if(($article[$key]??'')!==($repaired[$key]??''))$same=false;
         if($same || !GNF5_SEO::text_repair_progress($article,$repaired,$post_id)){
-            update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
+            $limitation=!empty($repaired['seo_unresolved']) || (GNF5_Utils::word_count($repaired['content_html'])<600 && !empty($repaired['short_reason']));
+            if(!$limitation && $attempt<3){
+                update_post_meta($post_id,'_gnf5_seo_repair_retryable',1);
+                update_post_meta($post_id,'_gnf5_text_repair_feedback',array('Previous candidate was unchanged or regressed a passing check. Fix the listed failures together, retain all passing placements and supply an evidence-specific reason for any unresolved point.'));
+            }else update_post_meta($post_id,'_gnf5_seo_repair_stopped',$repair_key);
             update_post_meta($post_id,'_gnf5_seo_repair_note','No text-check progress without regressions was returned. Original text retained; review the checklist.');return false;
         }
         $report=GNF5_Quality::evaluate($repaired,$research,true,$post_id);
